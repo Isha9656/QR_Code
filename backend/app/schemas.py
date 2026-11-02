@@ -16,6 +16,13 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
+class CreateUserRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=50)
+    password: str = Field(..., min_length=8, max_length=128)
+    display_name: str = Field(..., min_length=1, max_length=100)
+    role: str = Field(default="operator")
+
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -129,6 +136,7 @@ class AssignmentHistoryResponse(BaseModel):
 
 class QRResolveResponse(BaseModel):
     status: str
+    qr_id: Optional[str] = None
     destination_url: Optional[str] = None
     business_name: Optional[str] = None
     message: Optional[str] = None

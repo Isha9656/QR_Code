@@ -31,7 +31,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
   // Always go to network for API calls and QR redirects
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/q/')) {
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/q/') || url.pathname.startsWith('/qr/')) {
     event.respondWith(
       fetch(event.request).catch(() => {
         return new Response(JSON.stringify({ error: 'Offline' }), {

@@ -1,6 +1,7 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.auth import get_current_user, get_admin_user
 from app.models import User, UserRole, QRCode, QRAssignment, QRStatus, AuditLog
@@ -102,7 +103,14 @@ async def assign_qr(
         }),
     )
     db.add(audit)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflict: This QR code has already been assigned or is locked by another request.",
+        )
     db.refresh(assignment)
     
     return assignment_to_response(assignment, db)
@@ -175,7 +183,14 @@ async def reassign_qr(
         }),
     )
     db.add(audit)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflict: Concurrent reassignment detected.",
+        )
     db.refresh(new_assignment)
     
     return assignment_to_response(new_assignment, db)
@@ -298,16 +313,22 @@ async def recover_qr(
 
 
 def _resolve_qr(qr_id_or_db_id: str, db: Session) -> QRCode:
-    """Resolve a QR code by QR-ID string or database ID."""
+    """Resolve a QR code by QR-ID string, token, or database ID."""
     qr = None
     if qr_id_or_db_id.startswith("QR-"):
         qr = db.query(QRCode).filter(QRCode.qr_id == qr_id_or_db_id).first()
+    elif len(qr_id_or_db_id) >= 20:
+        qr = db.query(QRCode).filter(QRCode.token == qr_id_or_db_id).first()
     else:
         try:
             db_id = int(qr_id_or_db_id)
             qr = db.query(QRCode).filter(QRCode.id == db_id).first()
         except ValueError:
             pass
+    
+    if not qr:
+        # Fallback check by token in case token was short or didn't match above
+        qr = db.query(QRCode).filter(QRCode.token == qr_id_or_db_id).first()
     
     if not qr:
         raise HTTPException(status_code=404, detail="QR code not found")

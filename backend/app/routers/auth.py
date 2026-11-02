@@ -7,7 +7,7 @@ from app.auth import (
 )
 from app.models import User, UserRole, AuditLog
 from app.schemas import (
-    LoginRequest, TokenResponse, UserResponse, PasswordChangeRequest
+    LoginRequest, TokenResponse, UserResponse, PasswordChangeRequest, CreateUserRequest
 )
 import json
 
@@ -96,27 +96,24 @@ async def change_password(
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(
-    username: str,
-    password: str,
-    display_name: str,
-    role: str = "operator",
+    request: CreateUserRequest,
     admin: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
-    """Create a new user (admin only)."""
-    existing = db.query(User).filter(User.username == username).first()
+    """Create a new user (admin only). Accepts JSON body."""
+    existing = db.query(User).filter(User.username == request.username).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already exists",
         )
     
-    user_role = UserRole.ADMIN if role == "admin" else UserRole.OPERATOR
+    user_role = UserRole.ADMIN if request.role == "admin" else UserRole.OPERATOR
     
     new_user = User(
-        username=username,
-        password_hash=hash_password(password),
-        display_name=display_name,
+        username=request.username,
+        password_hash=hash_password(request.password),
+        display_name=request.display_name,
         role=user_role,
         is_active=True,
     )
@@ -126,7 +123,7 @@ async def create_user(
         user_id=admin.id,
         action="create_user",
         entity_type="user",
-        details=json.dumps({"username": username, "role": role}),
+        details=json.dumps({"username": request.username, "role": request.role}),
     )
     db.add(audit)
     db.commit()

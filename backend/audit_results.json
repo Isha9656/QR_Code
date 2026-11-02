@@ -1,0 +1,134 @@
+[
+  {
+    "name": "Health Check Endpoint",
+    "status": "PASS",
+    "details": "Status: 200, Resp: {\"status\":\"healthy\",\"app\":\"Internal QR Management System\",\"version\":\"1.0.0\"}",
+    "category": "functional"
+  },
+  {
+    "name": "Admin Login, Verification & Logout",
+    "status": "PASS",
+    "details": "Login, /me and logout endpoints verified",
+    "category": "functional"
+  },
+  {
+    "name": "Admin and Operator Authorization & Role Restrictions",
+    "status": "PASS",
+    "details": "Operator created and blocked from admin endpoints (Bulk: 403, Reassign: 403)",
+    "category": "functional"
+  },
+  {
+    "name": "Bulk Generation of 20 Unique QR Codes",
+    "status": "PASS",
+    "details": "Generated 20 unique QR codes with tokens",
+    "category": "functional"
+  },
+  {
+    "name": "Unassigned QR Behavior (Public scan & Resolver)",
+    "status": "PASS",
+    "details": "Unassigned page displayed and resolver returned unassigned status",
+    "category": "functional"
+  },
+  {
+    "name": "QR Assignment to 'Nasta Ghar'",
+    "status": "PASS",
+    "details": "Assigned to Nasta Ghar (https://nastaghar.example.com/menu)",
+    "category": "functional"
+  },
+  {
+    "name": "Public QR Redirect to Destination URL",
+    "status": "PASS",
+    "details": "302 redirect verified for /q/{token} and /qr/{token}",
+    "category": "functional"
+  },
+  {
+    "name": "Deactivation of Assignment",
+    "status": "PASS",
+    "details": "Assignment deactivated, old destination unreachable",
+    "category": "functional"
+  },
+  {
+    "name": "Reassignment to Gym & Redirect Verification",
+    "status": "PASS",
+    "details": "QR reassigned to PowerFit Gym and redirects to gym URL",
+    "category": "functional"
+  },
+  {
+    "name": "Assignment History Preservation",
+    "status": "PASS",
+    "details": "Found 2 history records: ['PowerFit Gym', 'Nasta Ghar']",
+    "category": "functional"
+  },
+  {
+    "name": "Other 19 QR Codes Unaffected",
+    "status": "PASS",
+    "details": "All 19 other QR codes remain unassigned and unchanged",
+    "category": "functional"
+  },
+  {
+    "name": "QR PNG and Printable PDF Export",
+    "status": "PASS",
+    "details": "PNG: 26567 bytes, PDF: 621650 bytes",
+    "category": "functional"
+  },
+  {
+    "name": "Security: Unauthorized Access to Management APIs",
+    "status": "PASS",
+    "details": "Unauthenticated requests rejected with 401 (401, 401, 401)",
+    "category": "security"
+  },
+  {
+    "name": "Security: Invalid Destination URL Validation",
+    "status": "PASS",
+    "details": "Blocked javascript:, ftp:, and empty domains (Statuses: 422, 422, 422)",
+    "category": "security"
+  },
+  {
+    "name": "Security: Duplicate Assignment Prevention",
+    "status": "PASS",
+    "details": "Attempt to assign active code rejected: 400 (QR code is currently active. Use reassign endpoint for active codes.)",
+    "category": "security"
+  },
+  {
+    "name": "Security: Concurrent Assignment Handling",
+    "status": "PASS",
+    "details": "5 simultaneous requests -> exactly 1 succeeded, codes: [200, 400, 400, 400, 400]",
+    "category": "security"
+  },
+  {
+    "name": "Security: Expired / Forged Session Handling",
+    "status": "PASS",
+    "details": "Expired/invalid JWT rejected with 401",
+    "category": "security"
+  },
+  {
+    "name": "Security: Public Visitors Cannot Modify Mappings",
+    "status": "PASS",
+    "details": "Assign: 401, Reassign: 401, Deactivate: 401",
+    "category": "security"
+  },
+  {
+    "name": "PWA Manifest & Installation Readiness",
+    "status": "PASS",
+    "details": "Manifest, icons (192, 512), standalone display, and service worker verified",
+    "category": "functional"
+  },
+  {
+    "name": "Responsive Mobile UI & Viewport Settings",
+    "status": "PASS",
+    "details": "Mobile viewport meta, standalone tags, and SW auto-registration confirmed",
+    "category": "functional"
+  },
+  {
+    "name": "Mobile Camera Scanner Implementation",
+    "status": "PASS",
+    "details": "Html5Qrcode back camera preference, permission handlers, and manual input fallback present",
+    "category": "functional"
+  },
+  {
+    "name": "Database Persistence & On-Disk Storage",
+    "status": "PASS",
+    "details": "qr_system.db verified: 100 QRs, 3 users, 6 assignments stored on disk",
+    "category": "functional"
+  }
+]

@@ -62,9 +62,21 @@ export default function ScanPage() {
   };
 
   const handleScanResult = async (scannedUrl) => {
-    // Extract token from URL: /q/TOKEN
-    const match = scannedUrl.match(/\/q\/([A-Za-z0-9]+)$/);
+    // Extract token from URL: /q/TOKEN or /qr/TOKEN
+    const match = scannedUrl.match(/\/(?:q|qr)\/([A-Za-z0-9]+)(?:[/?#]|$)/);
     if (!match) {
+      // Check if raw token was entered/scanned
+      if (/^[A-Za-z0-9]{16,64}$/.test(scannedUrl.trim())) {
+        const token = scannedUrl.trim();
+        try {
+          const res = await qrAPI.resolve(token);
+          setResult({ ...res.data, token, qr_id: res.data.qr_id });
+          return;
+        } catch {
+          setResult({ status: 'error', message: 'Failed to resolve QR code' });
+          return;
+        }
+      }
       setResult({ status: 'invalid', message: 'Not a valid QR code from this system' });
       return;
     }
@@ -72,7 +84,7 @@ export default function ScanPage() {
     const token = match[1];
     try {
       const res = await qrAPI.resolve(token);
-      setResult({ ...res.data, token });
+      setResult({ ...res.data, token, qr_id: res.data.qr_id });
     } catch (err) {
       setResult({ status: 'error', message: 'Failed to resolve QR code' });
     }
@@ -84,10 +96,10 @@ export default function ScanPage() {
 
     try {
       const searchVal = manualInput.trim();
-      // Check if it's a token or QR-ID
-      if (searchVal.includes('/q/')) {
+      // Check if it's a URL or contains /q/ or /qr/
+      if (searchVal.includes('/q/') || searchVal.includes('/qr/')) {
         await handleScanResult(searchVal);
-      } else {
+      } else if (searchVal.startsWith('QR-')) {
         // Lookup by QR-ID
         const res = await qrAPI.get(searchVal);
         const qr = res.data;
@@ -98,6 +110,9 @@ export default function ScanPage() {
           token: qr.token,
           qr_id: qr.qr_id,
         });
+      } else {
+        // Try resolving as token
+        await handleScanResult(searchVal);
       }
     } catch (err) {
       setResult({ status: 'not_found', message: 'QR code not found' });
@@ -110,15 +125,17 @@ export default function ScanPage() {
     setAssignLoading(true);
 
     try {
-      // Find QR by token first to get the ID
-      const resolveRes = await qrAPI.list({ search: result.token, per_page: 1 });
-      if (resolveRes.data.items.length === 0) {
-        setToast({ type: 'error', message: 'QR code not found' });
-        setAssignLoading(false);
-        return;
+      // Use qr_id directly if available, otherwise search by token or pass token directly
+      let qrIdentifier = result.qr_id;
+      if (!qrIdentifier) {
+        const resolveRes = await qrAPI.list({ search: result.token, per_page: 1 });
+        if (resolveRes.data.items.length > 0) {
+          qrIdentifier = resolveRes.data.items[0].qr_id;
+        } else {
+          qrIdentifier = result.token;
+        }
       }
 
-      const qrId = resolveRes.data.items[0].qr_id;
       const assignData = {
         business_name: assignForm.business_name,
         destination_url: assignForm.destination_url,
@@ -126,14 +143,14 @@ export default function ScanPage() {
         expiry_date: assignForm.expiry_date || undefined,
       };
 
-      await qrAPI.assign(qrId, assignData);
+      await qrAPI.assign(qrIdentifier, assignData);
       setToast({ type: 'success', message: 'QR code assigned successfully!' });
       setShowAssign(false);
       setAssignForm({ business_name: '', destination_url: '', notes: '', expiry_date: '' });
 
       // Refresh result
       const refreshRes = await qrAPI.resolve(result.token);
-      setResult({ ...refreshRes.data, token: result.token });
+      setResult({ ...refreshRes.data, token: result.token, qr_id: refreshRes.data.qr_id || qrIdentifier });
     } catch (err) {
       setToast({
         type: 'error',

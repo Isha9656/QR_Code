@@ -126,6 +126,7 @@ RETIRED_HTML = """<!DOCTYPE html>
 
 
 @router.get("/q/{token}")
+@router.get("/qr/{token}")
 async def public_redirect(token: str, request: Request, db: Session = Depends(get_db)):
     """Public QR redirect endpoint. This is what the printed QR code points to."""
     qr = db.query(QRCode).filter(QRCode.token == token).first()
@@ -172,12 +173,14 @@ async def resolve_qr_api(token: str, db: Session = Depends(get_db)):
     if qr.status == QRStatus.UNASSIGNED:
         return QRResolveResponse(
             status="unassigned",
+            qr_id=qr.qr_id,
             message="This QR code has not been activated yet.",
         )
     
     if qr.status == QRStatus.ACTIVE:
         return QRResolveResponse(
             status="active",
+            qr_id=qr.qr_id,
             destination_url=qr.current_destination,
             business_name=qr.current_business_name,
         )
@@ -185,13 +188,15 @@ async def resolve_qr_api(token: str, db: Session = Depends(get_db)):
     if qr.status == QRStatus.DISABLED:
         return QRResolveResponse(
             status="disabled",
+            qr_id=qr.qr_id,
             message="This QR code is currently disabled.",
         )
     
     if qr.status == QRStatus.RETIRED:
         return QRResolveResponse(
             status="retired",
+            qr_id=qr.qr_id,
             message="This QR code has been retired.",
         )
     
-    return QRResolveResponse(status=qr.status.value, message="Unknown status")
+    return QRResolveResponse(status=qr.status.value, qr_id=qr.qr_id, message="Unknown status")

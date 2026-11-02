@@ -40,8 +40,7 @@ export const authAPI = {
   me: () => api.get('/api/auth/me'),
   changePassword: (current_password, new_password) =>
     api.post('/api/auth/change-password', { current_password, new_password }),
-  createUser: (username, password, display_name, role) =>
-    api.post(`/api/auth/users?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&display_name=${encodeURIComponent(display_name)}&role=${role}`),
+  createUser: (data) => api.post('/api/auth/users', data),
 };
 
 // QR Codes

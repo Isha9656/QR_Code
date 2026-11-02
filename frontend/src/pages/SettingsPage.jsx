@@ -53,7 +53,7 @@ export default function SettingsPage() {
 
     setUserLoading(true);
     try {
-      await authAPI.createUser(newUser.username, newUser.password, newUser.display_name, newUser.role);
+      await authAPI.createUser(newUser);
       setUserSuccess(`User "${newUser.username}" created successfully`);
       setNewUser({ username: '', password: '', display_name: '', role: 'operator' });
     } catch (err) {
