@@ -6,6 +6,7 @@ import ScanPage from './pages/ScanPage';
 import InventoryPage from './pages/InventoryPage';
 import GeneratePage from './pages/GeneratePage';
 import SettingsPage from './pages/SettingsPage';
+import PrintStudioPage from './pages/PrintStudioPage';
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -39,6 +40,7 @@ function AppLayout() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/print-studio" element={<PrintStudioPage />} />
           <Route path="/generate" element={<GeneratePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -58,6 +60,10 @@ function AppLayout() {
         <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">📋</span>
           <span>Inventory</span>
+        </NavLink>
+        <NavLink to="/print-studio" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <span className="nav-icon">🖨️</span>
+          <span>Studio</span>
         </NavLink>
         <NavLink to="/generate" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">⚡</span>

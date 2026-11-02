@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
-from typing import Optional
+from sqlalchemy import or_, func
+from typing import Optional, List
 from app.database import get_db
 from app.auth import get_current_user, get_admin_user
 from app.models import User, QRCode, QRStatus, AuditLog
 from app.schemas import (
-    BulkGenerateRequest, QRCodeResponse, QRCodeListResponse
+    BulkGenerateRequest, QRCodeResponse, QRCodeListResponse, QRInventoryStats
 )
 from app.services.qr_generator import bulk_generate_qr_codes, get_qr_redirect_url
 from app.config import get_settings
@@ -103,6 +103,37 @@ async def list_qr_codes(
         per_page=per_page,
         total_pages=total_pages,
     )
+
+
+@router.get("/stats", response_model=QRInventoryStats)
+async def get_inventory_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get live inventory counts: total, unassigned, active, disabled, retired."""
+    total = db.query(func.count(QRCode.id)).scalar() or 0
+    unassigned = db.query(func.count(QRCode.id)).filter(QRCode.status == QRStatus.UNASSIGNED).scalar() or 0
+    active = db.query(func.count(QRCode.id)).filter(QRCode.status == QRStatus.ACTIVE).scalar() or 0
+    disabled = db.query(func.count(QRCode.id)).filter(QRCode.status == QRStatus.DISABLED).scalar() or 0
+    retired = db.query(func.count(QRCode.id)).filter(QRCode.status == QRStatus.RETIRED).scalar() or 0
+    
+    return QRInventoryStats(
+        total=total,
+        unassigned=unassigned,
+        active=active,
+        disabled=disabled,
+        retired=retired,
+    )
+
+
+@router.get("/businesses", response_model=List[str])
+async def get_distinct_businesses(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get list of distinct business names assigned so far."""
+    rows = db.query(QRCode.current_business_name).filter(QRCode.current_business_name.isnot(None)).distinct().all()
+    return sorted(list(set(r[0] for r in rows if r[0])))
 
 
 @router.get("/{qr_id_or_db_id}", response_model=QRCodeResponse)

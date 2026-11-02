@@ -55,6 +55,8 @@ export const qrAPI = {
   retire: (id) => api.post(`/api/qr/${id}/retire`),
   recover: (id) => api.post(`/api/qr/${id}/recover`),
   resolve: (token) => api.get(`/api/qr/resolve/${token}`),
+  getStats: () => api.get('/api/qr/stats'),
+  getBusinesses: () => api.get('/api/qr/businesses'),
 };
 
 // Printing
@@ -62,6 +64,8 @@ export const printAPI = {
   exportPDF: (data) => api.post('/api/qr/export/pdf', data, { responseType: 'blob' }),
   exportPNG: (qrId, size = 300) => api.get(`/api/qr/export/png/${qrId}?size=${size}`, { responseType: 'blob' }),
   exportZIP: (data) => api.post('/api/qr/export/zip', data, { responseType: 'blob' }),
+  exportStudioPDF: (data) => api.post('/api/qr/export/studio-pdf', data, { responseType: 'blob' }),
+  previewStudioSheet: (data) => api.post('/api/qr/export/studio-preview', data),
 };
 
 // Analytics

@@ -263,3 +263,99 @@ def test_qr_export_png_and_pdf():
     assert pdf_resp.headers["content-type"] == "application/pdf"
     assert len(pdf_resp.content) > 100
 
+
+def test_inventory_stats_and_businesses():
+    login_resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    token = login_resp.json()["access_token"]
+
+    # Test stats
+    stats_resp = client.get("/api/qr/stats", headers={"Authorization": f"Bearer {token}"})
+    assert stats_resp.status_code == 200
+    stats = stats_resp.json()
+    assert "total" in stats
+    assert "unassigned" in stats
+    assert "active" in stats
+    assert "disabled" in stats
+    assert "retired" in stats
+
+    # Test businesses list
+    biz_resp = client.get("/api/qr/businesses", headers={"Authorization": f"Bearer {token}"})
+    assert biz_resp.status_code == 200
+    assert isinstance(biz_resp.json(), list)
+
+
+def test_bulk_printing_studio_preview_and_pdf():
+    login_resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    token = login_resp.json()["access_token"]
+
+    # Studio layout preview
+    preview_resp = client.post(
+        "/api/qr/export/studio-preview",
+        json={
+            "quantity": 20,
+            "qr_size_mm": 30,
+            "show_labels": True,
+            "company_name": "TEST CORP",
+            "header_text": "INTERNAL ASSETS",
+            "page_margin_mm": 10,
+            "spacing_mm": 5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert preview_resp.status_code == 200
+    preview_data = preview_resp.json()
+    assert preview_data["cols"] > 0
+    assert preview_data["rows"] > 0
+    assert preview_data["total_pages"] >= 1
+    assert preview_data["total_qrs"] == 20
+    assert len(preview_data["sample_qrs"]) > 0
+
+    # Studio PDF download with quantity
+    pdf_resp = client.post(
+        "/api/qr/export/studio-pdf",
+        json={
+            "quantity": 5,
+            "qr_size_mm": 30,
+            "show_labels": True,
+            "company_name": "TEST CORP",
+            "header_text": "INTERNAL ASSETS",
+            "page_margin_mm": 10,
+            "spacing_mm": 5,
+            "unassigned_only": True,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.headers["content-type"] == "application/pdf"
+    assert len(pdf_resp.content) > 1000
+
+
+def test_bulk_printing_studio_rejects_non_unassigned():
+    login_resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    token = login_resp.json()["access_token"]
+
+    # Bulk generate 2 QRs
+    gen_resp = client.post("/api/qr/bulk-generate", json={"quantity": 2}, headers={"Authorization": f"Bearer {token}"})
+    qr1 = gen_resp.json()[0]
+    qr2 = gen_resp.json()[1]
+
+    # Assign qr1 so it is active
+    client.post(
+        f"/api/qr/{qr1['qr_id']}/assign",
+        json={"business_name": "Studio Test Co", "destination_url": "https://test.example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Attempting to print studio PDF containing active qr1 with unassigned_only=True must fail with 400!
+    bad_print = client.post(
+        "/api/qr/export/studio-pdf",
+        json={
+            "qr_ids": [qr1["id"], qr2["id"]],
+            "unassigned_only": True,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert bad_print.status_code == 400
+    assert "Only unassigned QR codes" in bad_print.json()["detail"]
+
+

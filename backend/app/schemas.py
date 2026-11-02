@@ -183,3 +183,43 @@ class PrintRequest(BaseModel):
     show_logo: bool = False
     page_margin_mm: int = Field(default=10, ge=5, le=30)
     spacing_mm: int = Field(default=5, ge=2, le=20)
+
+
+class PrintStudioRequest(BaseModel):
+    quantity: Optional[int] = Field(default=None, ge=1, le=2000)
+    qr_ids: Optional[List[int]] = None
+    qr_size_mm: int = Field(default=30, ge=15, le=80)
+    show_labels: bool = True
+    company_name: Optional[str] = "INTERNAL QR MANAGEMENT"
+    header_text: Optional[str] = "OFFICIAL ASSET STICKERS • DO NOT DISCARD"
+    footer_text: Optional[str] = "Scan with internal system camera to activate or reassign"
+    page_margin_mm: int = Field(default=10, ge=5, le=30)
+    spacing_mm: int = Field(default=5, ge=2, le=20)
+    custom_rows: Optional[int] = Field(default=None, ge=1, le=20)
+    custom_cols: Optional[int] = Field(default=None, ge=1, le=10)
+    unassigned_only: bool = True
+
+
+class PrintStudioPreviewResponse(BaseModel):
+    total_qrs: int
+    unassigned_available: int
+    qr_size_mm: int
+    cols: int
+    rows: int
+    qrs_per_page: int
+    total_pages: int
+    page_margin_mm: int
+    spacing_mm: int
+    company_name: Optional[str] = None
+    header_text: Optional[str] = None
+    footer_text: Optional[str] = None
+    sample_qrs: List[dict] = []
+
+
+class QRInventoryStats(BaseModel):
+    total: int
+    unassigned: int
+    active: int
+    disabled: int
+    retired: int
+
