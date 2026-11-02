@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.env
+!.env.example
+
+# Database
+*.db
+*.sqlite3
+qr_system.db
+
+# Build outputs & tests
+dist/
+dist-ssr/
+.pytest_cache/
+coverage/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
