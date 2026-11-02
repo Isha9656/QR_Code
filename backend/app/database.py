@@ -30,5 +30,23 @@ def get_db():
 
 
 def init_db():
-    """Create all tables."""
+    """Create all tables and perform lightweight schema migrations."""
+    import app.models  # Ensure all models are registered on Base.metadata
+    from sqlalchemy import text
     Base.metadata.create_all(bind=engine)
+    
+    # Run column migrations for SQLite
+    if settings.DATABASE_URL.startswith("sqlite"):
+        with engine.connect() as conn:
+            # Check users table
+            user_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(users)"))]
+            if "must_change_password" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0"))
+                conn.commit()
+            
+            # Check audit_logs table
+            audit_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(audit_logs)"))]
+            if "status" not in audit_cols:
+                conn.execute(text("ALTER TABLE audit_logs ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'success'"))
+                conn.commit()
+

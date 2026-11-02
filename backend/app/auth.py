@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
@@ -7,7 +8,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
-from app.models import User, UserRole
+from app.models import User, UserRole, RevokedToken
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -25,10 +26,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create a JWT access token."""
+    """Create a JWT access token with a unique jti identifier."""
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
+    jti = uuid.uuid4().hex
+    to_encode.update({"exp": expire, "jti": jti})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -46,10 +48,11 @@ def decode_token(token: str) -> dict:
 
 
 async def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
-    """Get the current authenticated user from the JWT token."""
+    """Get the current authenticated user from the JWT token with persistent revocation check and password change enforcement."""
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -58,6 +61,18 @@ async def get_current_user(
         )
     
     payload = decode_token(credentials.credentials)
+    
+    # Check persistent token revocation
+    jti = payload.get("jti")
+    if jti:
+        revoked = db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+        if revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    
     user_id = payload.get("sub")
     if user_id is None:
         raise HTTPException(
@@ -71,6 +86,22 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+
+    # Centralized password change enforcement
+    if user.must_change_password:
+        path = request.url.path.rstrip("/")
+        allowed_paths = (
+            "/api/auth/change-password",
+            "/api/auth/logout",
+            "/api/auth/me",
+        )
+        if path not in allowed_paths:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Password change required. You must change your default password before accessing the system.",
+                headers={"X-Require-Password-Change": "true"},
+            )
+
     return user
 
 
@@ -93,6 +124,11 @@ async def get_optional_user(
         return None
     try:
         payload = decode_token(credentials.credentials)
+        jti = payload.get("jti")
+        if jti:
+            revoked = db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+            if revoked:
+                return None
         user_id = payload.get("sub")
         if user_id is None:
             return None
@@ -103,8 +139,8 @@ async def get_optional_user(
 
 
 def create_default_admin(db: Session):
-    """Create a default admin user if none exists."""
-    admin = db.query(User).filter(User.role == UserRole.ADMIN).first()
+    """Create a default admin user if none exists and set must_change_password."""
+    admin = db.query(User).filter(User.username == "admin").first()
     if admin is None:
         admin = User(
             username="admin",
@@ -112,7 +148,12 @@ def create_default_admin(db: Session):
             display_name="System Administrator",
             role=UserRole.ADMIN,
             is_active=True,
+            must_change_password=True,
         )
         db.add(admin)
         db.commit()
-        print("[+] Default admin created (username: admin, password: admin123)")
+        print("[!] Default admin created with mandatory password change requirement.")
+    elif verify_password("admin123", admin.password_hash) and not admin.must_change_password:
+        admin.must_change_password = True
+        db.commit()
+        print("[!] Existing admin is using default password; must_change_password flag set.")

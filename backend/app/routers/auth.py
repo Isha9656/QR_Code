@@ -1,28 +1,45 @@
+import json
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import HTTPAuthorizationCredentials
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import (
-    verify_password, hash_password, create_access_token,
-    get_current_user, get_admin_user
+    verify_password, hash_password, create_access_token, decode_token,
+    get_current_user, get_admin_user, security
 )
-from app.models import User, UserRole, AuditLog
+from app.models import User, UserRole, AuditLog, RevokedToken
 from app.schemas import (
     LoginRequest, TokenResponse, UserResponse, PasswordChangeRequest, CreateUserRequest
 )
-import json
-
+from app.core.limiter import limiter
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, req: Request, db: Session = Depends(get_db)):
-    """Authenticate user and return JWT token."""
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
+    """Authenticate user, return JWT token with unique jti, and check must_change_password."""
     user = db.query(User).filter(
-        User.username == request.username,
+        User.username == body.username,
         User.is_active == True
     ).first()
     
-    if not user or not verify_password(request.password, user.password_hash):
+    if not user or not verify_password(body.password, user.password_hash):
+        # Audit log failed login without exposing password
+        audit = AuditLog(
+            user_id=user.id if user else None,
+            action="login_failed",
+            entity_type="user",
+            entity_id=user.id if user else None,
+            details=json.dumps({"attempted_username": body.username}),
+            status="failed",
+            ip_address=request.client.host if request.client else None,
+        )
+        db.add(audit)
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -30,31 +47,58 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
     
     token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
     
-    # Audit log
+    # Audit successful login
     audit = AuditLog(
         user_id=user.id,
         action="login",
         entity_type="user",
         entity_id=user.id,
-        ip_address=req.client.host if req.client else None,
+        status="success",
+        ip_address=request.client.host if request.client else None,
     )
     db.add(audit)
     db.commit()
     
     return TokenResponse(
         access_token=token,
+        must_change_password=user.must_change_password,
         user=UserResponse.model_validate(user),
     )
 
 
 @router.post("/logout")
-async def logout(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Logout (client should discard the token)."""
+async def logout(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Logout and revoke the JWT token persistently across server restarts."""
+    if credentials and credentials.credentials:
+        try:
+            payload = decode_token(credentials.credentials)
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti and exp:
+                expires_at = datetime.utcfromtimestamp(exp)
+                existing = db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                if not existing:
+                    revoked = RevokedToken(
+                        jti=jti,
+                        user_id=current_user.id,
+                        expires_at=expires_at,
+                    )
+                    db.add(revoked)
+        except Exception:
+            pass
+
     audit = AuditLog(
         user_id=current_user.id,
         action="logout",
         entity_type="user",
         entity_id=current_user.id,
+        status="success",
+        ip_address=request.client.host if request.client else None,
     )
     db.add(audit)
     db.commit()
@@ -69,53 +113,77 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @router.post("/change-password")
 async def change_password(
-    request: PasswordChangeRequest,
+    request: Request,
+    body: PasswordChangeRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Change the current user's password."""
-    if not verify_password(request.current_password, current_user.password_hash):
+    """Change the current user's password and clear must_change_password flag."""
+    if not verify_password(body.current_password, current_user.password_hash):
+        audit = AuditLog(
+            user_id=current_user.id,
+            action="password_change_failed",
+            entity_type="user",
+            entity_id=current_user.id,
+            status="failed",
+            details=json.dumps({"reason": "incorrect_current_password"}),
+            ip_address=request.client.host if request.client else None,
+        )
+        db.add(audit)
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
         )
     
-    current_user.password_hash = hash_password(request.new_password)
+    # Disallow reusing default password
+    if body.new_password == "admin123":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password cannot be the default password. Please choose a unique strong password.",
+        )
+    
+    current_user.password_hash = hash_password(body.new_password)
+    current_user.must_change_password = False
     
     audit = AuditLog(
         user_id=current_user.id,
         action="password_change",
         entity_type="user",
         entity_id=current_user.id,
+        status="success",
+        ip_address=request.client.host if request.client else None,
     )
     db.add(audit)
     db.commit()
     
-    return {"message": "Password changed successfully"}
+    return {"message": "Password changed successfully", "must_change_password": False}
 
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(
-    request: CreateUserRequest,
+    request: Request,
+    body: CreateUserRequest,
     admin: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
     """Create a new user (admin only). Accepts JSON body."""
-    existing = db.query(User).filter(User.username == request.username).first()
+    existing = db.query(User).filter(User.username == body.username).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already exists",
         )
     
-    user_role = UserRole.ADMIN if request.role == "admin" else UserRole.OPERATOR
+    user_role = UserRole.ADMIN if body.role == "admin" else UserRole.OPERATOR
     
     new_user = User(
-        username=request.username,
-        password_hash=hash_password(request.password),
-        display_name=request.display_name,
+        username=body.username,
+        password_hash=hash_password(body.password),
+        display_name=body.display_name,
         role=user_role,
         is_active=True,
+        must_change_password=False,
     )
     db.add(new_user)
     
@@ -123,7 +191,9 @@ async def create_user(
         user_id=admin.id,
         action="create_user",
         entity_type="user",
-        details=json.dumps({"username": request.username, "role": request.role}),
+        details=json.dumps({"username": body.username, "role": body.role}),
+        status="success",
+        ip_address=request.client.host if request.client else None,
     )
     db.add(audit)
     db.commit()

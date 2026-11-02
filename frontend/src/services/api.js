@@ -52,6 +52,7 @@ export const qrAPI = {
   assign: (id, data) => api.post(`/api/qr/${id}/assign`, data),
   reassign: (id, data) => api.post(`/api/qr/${id}/reassign`, data),
   deactivate: (id) => api.post(`/api/qr/${id}/deactivate`),
+  reactivate: (id) => api.post(`/api/qr/${id}/reactivate`),
   retire: (id) => api.post(`/api/qr/${id}/retire`),
   recover: (id) => api.post(`/api/qr/${id}/recover`),
   resolve: (token) => api.get(`/api/qr/resolve/${token}`),
@@ -72,6 +73,15 @@ export const printAPI = {
 export const analyticsAPI = {
   overview: () => api.get('/api/analytics/overview'),
   scans: (params) => api.get('/api/analytics/scans', { params }),
+};
+
+// Admin, Backups & Audit
+export const adminAPI = {
+  createBackup: () => api.post('/api/admin/backups'),
+  getBackups: () => api.get('/api/admin/backups'),
+  downloadBackup: (filename) =>
+    api.get(`/api/admin/backups/${filename}/download`, { responseType: 'blob' }),
+  getAuditLogs: (params) => api.get('/api/admin/audit-logs', { params }),
 };
 
 export default api;

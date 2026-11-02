@@ -1,3 +1,5 @@
+import os
+os.environ["TESTING"] = "1"
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -27,6 +29,7 @@ client = TestClient(app)
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_database():
+    app.dependency_overrides[get_db] = override_get_db
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
@@ -51,6 +54,7 @@ def setup_database():
     db.close()
     yield
     Base.metadata.drop_all(bind=engine)
+    app.dependency_overrides.clear()
 
 
 def test_health_check():
@@ -184,17 +188,25 @@ def test_deactivate_and_recover():
     list_resp = client.get("/api/qr?status=active", headers={"Authorization": f"Bearer {token}"})
     assigned_qr = list_resp.json()["items"][0]
 
-    # Deactivate
+    # Deactivate (sets DISABLED, preserves destination)
     deact_resp = client.post(f"/api/qr/{assigned_qr['qr_id']}/deactivate", headers={"Authorization": f"Bearer {token}"})
     assert deact_resp.status_code == 200
+    assert deact_resp.json()["status"] == "disabled"
 
-    # Retire
+    # Reactivate (restores ACTIVE)
+    react_resp = client.post(f"/api/qr/{assigned_qr['qr_id']}/reactivate", headers={"Authorization": f"Bearer {token}"})
+    assert react_resp.status_code == 200
+    assert react_resp.json()["status"] == "active"
+
+    # Retire (terminal state)
     retire_resp = client.post(f"/api/qr/{assigned_qr['qr_id']}/retire", headers={"Authorization": f"Bearer {token}"})
     assert retire_resp.status_code == 200
+    assert retire_resp.json()["status"] == "retired"
 
-    # Recover
+    # Attempt to recover retired QR must be rejected
     recover_resp = client.post(f"/api/qr/{assigned_qr['qr_id']}/recover", headers={"Authorization": f"Bearer {token}"})
-    assert recover_resp.status_code == 200
+    assert recover_resp.status_code == 400
+    assert "cannot be reactivated" in recover_resp.json()["detail"].lower()
 
 
 def test_analytics_overview():

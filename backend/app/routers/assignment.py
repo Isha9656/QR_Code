@@ -135,7 +135,12 @@ async def reassign_qr(
     if qr.status == QRStatus.RETIRED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot reassign a retired QR code. Recover it first.",
+            detail="Cannot reassign a retired QR code. Retirement is permanent.",
+        )
+    if qr.status == QRStatus.UNASSIGNED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot reassign an unassigned QR code. Use the assign endpoint.",
         )
     
     # Deactivate current assignment
@@ -202,41 +207,83 @@ async def deactivate_qr(
     current_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
-    """Deactivate a QR code assignment (admin only)."""
+    """Deactivate / disable a QR code (admin only). Sets status to DISABLED while preserving destination and history."""
     qr = _resolve_qr(qr_id_or_db_id, db)
     
-    if qr.status not in (QRStatus.ACTIVE, QRStatus.DISABLED):
+    if qr.status == QRStatus.RETIRED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot deactivate a {qr.status.value} QR code",
+            detail="Cannot deactivate a retired QR code. Retirement is permanent.",
         )
+    if qr.status == QRStatus.UNASSIGNED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate an unassigned QR code.",
+        )
+    if qr.status == QRStatus.DISABLED:
+        return {"message": f"QR code {qr.qr_id} is already disabled"}
     
-    # Deactivate current assignment
-    current_assignment = db.query(QRAssignment).filter(
-        QRAssignment.qr_code_id == qr.id,
-        QRAssignment.is_active == True,
-    ).first()
-    
-    if current_assignment:
-        current_assignment.is_active = False
-        current_assignment.deactivated_at = datetime.utcnow()
-        current_assignment.deactivated_by = current_user.id
-    
-    qr.status = QRStatus.UNASSIGNED
-    qr.current_destination = None
-    qr.current_business_name = None
+    qr.status = QRStatus.DISABLED
+    # Preserve current_destination and current_business_name for authorized reactivation
     
     audit = AuditLog(
         user_id=current_user.id,
         action="deactivate",
         entity_type="qr_code",
         entity_id=qr.id,
-        details=json.dumps({"qr_id": qr.qr_id}),
+        status="success",
+        details=json.dumps({"qr_id": qr.qr_id, "preserved_destination": qr.current_destination}),
     )
     db.add(audit)
     db.commit()
     
-    return {"message": f"QR code {qr.qr_id} deactivated successfully"}
+    return {
+        "message": f"QR code {qr.qr_id} disabled successfully (destination preserved)",
+        "qr_id": qr.qr_id,
+        "status": qr.status.value,
+        "preserved_destination": qr.current_destination,
+    }
+
+
+@router.post("/{qr_id_or_db_id}/reactivate")
+async def reactivate_qr(
+    qr_id_or_db_id: str,
+    current_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """Reactivate a DISABLED QR code (admin only). Restores active redirection to preserved destination."""
+    qr = _resolve_qr(qr_id_or_db_id, db)
+    
+    if qr.status == QRStatus.RETIRED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Retired QR codes cannot be reactivated. Retirement is a permanent terminal state.",
+        )
+    if qr.status != QRStatus.DISABLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Only disabled QR codes can be reactivated. Current status is {qr.status.value}.",
+        )
+    
+    qr.status = QRStatus.ACTIVE
+    
+    audit = AuditLog(
+        user_id=current_user.id,
+        action="reactivate",
+        entity_type="qr_code",
+        entity_id=qr.id,
+        status="success",
+        details=json.dumps({"qr_id": qr.qr_id, "destination_url": qr.current_destination}),
+    )
+    db.add(audit)
+    db.commit()
+    
+    return {
+        "message": f"QR code {qr.qr_id} reactivated successfully",
+        "qr_id": qr.qr_id,
+        "status": qr.status.value,
+        "destination_url": qr.current_destination,
+    }
 
 
 @router.post("/{qr_id_or_db_id}/retire")
@@ -245,13 +292,13 @@ async def retire_qr(
     current_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
-    """Permanently retire a QR code (admin only)."""
+    """Permanently retire a QR code (admin only). Terminal state."""
     qr = _resolve_qr(qr_id_or_db_id, db)
     
     if qr.status == QRStatus.RETIRED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="QR code is already retired",
+            detail="QR code is already retired.",
         )
     
     # Deactivate current assignment if any
@@ -274,12 +321,17 @@ async def retire_qr(
         action="retire",
         entity_type="qr_code",
         entity_id=qr.id,
+        status="success",
         details=json.dumps({"qr_id": qr.qr_id}),
     )
     db.add(audit)
     db.commit()
     
-    return {"message": f"QR code {qr.qr_id} retired permanently"}
+    return {
+        "message": f"QR code {qr.qr_id} retired permanently. This action is terminal.",
+        "qr_id": qr.qr_id,
+        "status": qr.status.value,
+    }
 
 
 @router.post("/{qr_id_or_db_id}/recover")
@@ -288,28 +340,11 @@ async def recover_qr(
     current_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
-    """Recover a retired QR code (admin only)."""
-    qr = _resolve_qr(qr_id_or_db_id, db)
-    
-    if qr.status != QRStatus.RETIRED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only retired QR codes can be recovered",
-        )
-    
-    qr.status = QRStatus.UNASSIGNED
-    
-    audit = AuditLog(
-        user_id=current_user.id,
-        action="recover",
-        entity_type="qr_code",
-        entity_id=qr.id,
-        details=json.dumps({"qr_id": qr.qr_id}),
+    """Reject reactivation of retired QR codes (RETIRED is permanent terminal state)."""
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Retired QR codes cannot be reactivated. Retirement is a permanent terminal state.",
     )
-    db.add(audit)
-    db.commit()
-    
-    return {"message": f"QR code {qr.qr_id} recovered and set to unassigned"}
 
 
 def _resolve_qr(qr_id_or_db_id: str, db: Session) -> QRCode:

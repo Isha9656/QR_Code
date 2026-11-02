@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -7,6 +7,7 @@ import InventoryPage from './pages/InventoryPage';
 import GeneratePage from './pages/GeneratePage';
 import SettingsPage from './pages/SettingsPage';
 import PrintStudioPage from './pages/PrintStudioPage';
+import AuditPage from './pages/AuditPage';
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -21,15 +22,49 @@ function ProtectedRoute({ children }) {
 }
 
 function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user, isAdmin, logout } = useAuth();
 
   return (
     <div className="app-layout">
+      {/* Forced Password Change Security Banner */}
+      {user?.must_change_password && (
+        <div style={{
+          background: '#dc2626',
+          color: '#ffffff',
+          padding: '8px 16px',
+          textAlign: 'center',
+          fontSize: '0.82rem',
+          fontWeight: '600',
+          position: 'sticky',
+          top: 0,
+          zIndex: 1000,
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: '12px',
+        }}>
+          <span>⚠️ Security Warning: Default credentials in use. Change password immediately!</span>
+          <NavLink
+            to="/settings"
+            style={{
+              background: '#ffffff',
+              color: '#dc2626',
+              padding: '3px 8px',
+              borderRadius: '4px',
+              textDecoration: 'none',
+              fontSize: '0.75rem',
+            }}
+          >
+            Go to Settings
+          </NavLink>
+        </div>
+      )}
+
       {/* Top Bar */}
       <header className="top-bar">
         <h1>📱 QR Manager</h1>
         <div className="user-info">
-          <span className="user-badge">{user?.role}</span>
+          <span className="user-badge">{user?.role?.toUpperCase()}</span>
           <button className="logout-btn" onClick={logout}>Logout</button>
         </div>
       </header>
@@ -40,8 +75,9 @@ function AppLayout() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
-          <Route path="/print-studio" element={<PrintStudioPage />} />
-          <Route path="/generate" element={<GeneratePage />} />
+          <Route path="/print-studio" element={isAdmin ? <PrintStudioPage /> : <Navigate to="/" replace />} />
+          <Route path="/generate" element={isAdmin ? <GeneratePage /> : <Navigate to="/" replace />} />
+          <Route path="/audit" element={isAdmin ? <AuditPage /> : <Navigate to="/" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -61,14 +97,24 @@ function AppLayout() {
           <span className="nav-icon">📋</span>
           <span>Inventory</span>
         </NavLink>
-        <NavLink to="/print-studio" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon">🖨️</span>
-          <span>Studio</span>
-        </NavLink>
-        <NavLink to="/generate" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon">⚡</span>
-          <span>Generate</span>
-        </NavLink>
+        {isAdmin && (
+          <NavLink to="/print-studio" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">🖨️</span>
+            <span>Studio</span>
+          </NavLink>
+        )}
+        {isAdmin && (
+          <NavLink to="/audit" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">🛡️</span>
+            <span>Audit</span>
+          </NavLink>
+        )}
+        {isAdmin && (
+          <NavLink to="/generate" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">⚡</span>
+            <span>Generate</span>
+          </NavLink>
+        )}
         <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">⚙️</span>
           <span>Settings</span>
@@ -76,6 +122,11 @@ function AppLayout() {
       </nav>
     </div>
   );
+}
+
+function LoginWrapper() {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />;
 }
 
 export default function App() {
@@ -96,10 +147,4 @@ export default function App() {
       </AuthProvider>
     </BrowserRouter>
   );
-}
-
-function LoginWrapper() {
-  const { isAuthenticated, loading } = useAuth();
-  if (loading) return null;
-  return isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />;
 }

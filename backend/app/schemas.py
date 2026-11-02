@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field, field_validator
@@ -15,12 +16,42 @@ class PasswordChangeRequest(BaseModel):
     current_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=8, max_length=128)
 
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one number")
+        if not any(c in "!@#$%^&*()-_=+[]{}|;:,.<>?/`~" for c in v):
+            raise ValueError("Password must contain at least one special character")
+        return v
+
 
 class CreateUserRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=50)
     password: str = Field(..., min_length=8, max_length=128)
     display_name: str = Field(..., min_length=1, max_length=100)
     role: str = Field(default="operator")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one number")
+        if not any(c in "!@#$%^&*()-_=+[]{}|;:,.<>?/`~" for c in v):
+            raise ValueError("Password must contain at least one special character")
+        return v
 
 
 class UserResponse(BaseModel):
@@ -29,6 +60,7 @@ class UserResponse(BaseModel):
     display_name: str
     role: str
     is_active: bool
+    must_change_password: bool = False
     created_at: datetime
 
     class Config:
@@ -38,6 +70,7 @@ class UserResponse(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    must_change_password: bool = False
     user: UserResponse
 
 
@@ -81,11 +114,24 @@ class AssignRequest(BaseModel):
     @field_validator("destination_url")
     @classmethod
     def validate_url(cls, v):
+        if not v or not isinstance(v, str):
+            raise ValueError("Destination URL must be a non-empty string")
+        v = v.strip()
+        if any(c.isspace() for c in v):
+            raise ValueError("URL cannot contain whitespace")
         parsed = urlparse(v)
-        if parsed.scheme not in ("http", "https"):
+        scheme = parsed.scheme.lower()
+        if scheme not in ("http", "https"):
             raise ValueError("Only HTTP and HTTPS URLs are allowed")
-        if not parsed.netloc:
-            raise ValueError("Invalid URL: missing domain")
+        if parsed.username or parsed.password:
+            raise ValueError("URLs with embedded credentials are not allowed")
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError("Invalid URL: missing domain or hostname")
+        if not re.match(r"^[a-zA-Z0-9.-]+$", hostname):
+            raise ValueError("Invalid hostname: contains disallowed characters")
+        if hostname.lower() in {"169.254.169.254", "0.0.0.0"}:
+            raise ValueError(f"Destination hostname '{hostname}' is not permitted")
         return v
 
 
@@ -99,11 +145,24 @@ class ReassignRequest(BaseModel):
     @field_validator("destination_url")
     @classmethod
     def validate_url(cls, v):
+        if not v or not isinstance(v, str):
+            raise ValueError("Destination URL must be a non-empty string")
+        v = v.strip()
+        if any(c.isspace() for c in v):
+            raise ValueError("URL cannot contain whitespace")
         parsed = urlparse(v)
-        if parsed.scheme not in ("http", "https"):
+        scheme = parsed.scheme.lower()
+        if scheme not in ("http", "https"):
             raise ValueError("Only HTTP and HTTPS URLs are allowed")
-        if not parsed.netloc:
-            raise ValueError("Invalid URL: missing domain")
+        if parsed.username or parsed.password:
+            raise ValueError("URLs with embedded credentials are not allowed")
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError("Invalid URL: missing domain or hostname")
+        if not re.match(r"^[a-zA-Z0-9.-]+$", hostname):
+            raise ValueError("Invalid hostname: contains disallowed characters")
+        if hostname.lower() in {"169.254.169.254", "0.0.0.0"}:
+            raise ValueError(f"Destination hostname '{hostname}' is not permitted")
         return v
 
 
@@ -222,4 +281,29 @@ class QRInventoryStats(BaseModel):
     active: int
     disabled: int
     retired: int
+
+
+class AuditLogResponse(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    action: str
+    entity_type: str
+    entity_id: Optional[int] = None
+    details: Optional[str] = None
+    status: str = "success"
+    ip_address: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AuditLogListResponse(BaseModel):
+    items: List[AuditLogResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
 

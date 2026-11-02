@@ -30,9 +30,24 @@ class Settings(BaseSettings):
     QR_DEFAULT_SIZE: int = 300  # pixels
     QR_DEFAULT_BORDER: int = 2
     
+    # Environment
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    OPERATOR_CAN_ASSIGN: bool = os.getenv("OPERATOR_CAN_ASSIGN", "true").lower() != "false"
+    ENABLE_RATE_LIMITING: bool = os.getenv("ENABLE_RATE_LIMITING", "true").lower() != "false"
+    
     class Config:
         env_file = ".env"
         extra = "allow"
+
+    def validate_production_config(self):
+        if self.ENVIRONMENT.lower() == "production":
+            if self.SECRET_KEY == "dev-secret-key-change-in-production-use-openssl-rand-hex-32":
+                raise ValueError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: "
+                    "Default development SECRET_KEY detected in production! "
+                    "Generate a secure random secret (e.g. openssl rand -hex 32) and set SECRET_KEY in .env."
+                )
+
 
 
 @lru_cache()

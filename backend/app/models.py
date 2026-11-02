@@ -29,6 +29,7 @@ class User(Base):
     display_name = Column(String(100), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.OPERATOR)
     is_active = Column(Boolean, default=True, nullable=False)
+    must_change_password = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -115,6 +116,7 @@ class AuditLog(Base):
     entity_type = Column(String(50), nullable=False)  # qr_code, assignment, user
     entity_id = Column(Integer, nullable=True)
     details = Column(Text, nullable=True)  # JSON string with action details
+    status = Column(String(20), default="success", nullable=False, index=True)  # success, failed
     ip_address = Column(String(45), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -123,4 +125,17 @@ class AuditLog(Base):
 
     __table_args__ = (
         Index("ix_audit_logs_entity", "entity_type", "entity_id"),
+        Index("ix_audit_logs_action_status", "action", "status"),
+        Index("ix_audit_logs_created_at", "created_at"),
     )
+
+
+class RevokedToken(Base):
+    __tablename__ = "revoked_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    jti = Column(String(64), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    revoked_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
