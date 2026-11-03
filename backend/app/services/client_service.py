@@ -8,29 +8,73 @@ from app.models import QRCode, QRAssignment, QRScanEvent, QRStatus, AuditLog, Us
 
 
 def get_distinct_client_names(db: Session) -> List[str]:
-    """Retrieve all unique client/business names across active, disabled, and past assignments."""
-    # From current_business_name
+    """
+    Retrieve normalized unique client/business names across active, disabled, and retired assignments.
+    Excludes unassigned QR codes and deduplicates case/whitespace variations.
+    """
+    latest_assign_subq = (
+        db.query(
+            QRAssignment.qr_code_id,
+            func.max(QRAssignment.assigned_at).label("max_assigned_at")
+        )
+        .group_by(QRAssignment.qr_code_id)
+        .subquery()
+    )
+    
+    # 1. Names from current non-unassigned QR codes
     curr_names = [
-        r[0] for r in db.query(QRCode.current_business_name)
-        .filter(QRCode.current_business_name.isnot(None), QRCode.current_business_name != "")
-        .distinct().all()
+        r[0].strip() for r in db.query(QRCode.current_business_name)
+        .filter(
+            QRCode.current_business_name.isnot(None),
+            QRCode.current_business_name != "",
+            QRCode.status != QRStatus.UNASSIGNED,
+        )
+        .distinct().all() if r[0] and r[0].strip()
     ]
-    # From historical assignments
+    
+    # 2. Names from most recent assignment of retired or active/disabled QRs
     hist_names = [
-        r[0] for r in db.query(QRAssignment.business_name)
-        .filter(QRAssignment.business_name.isnot(None), QRAssignment.business_name != "")
-        .distinct().all()
+        r[0].strip() for r in db.query(QRAssignment.business_name)
+        .join(QRCode, QRCode.id == QRAssignment.qr_code_id)
+        .join(
+            latest_assign_subq,
+            and_(
+                QRAssignment.qr_code_id == latest_assign_subq.c.qr_code_id,
+                QRAssignment.assigned_at == latest_assign_subq.c.max_assigned_at,
+            )
+        )
+        .filter(
+            QRAssignment.business_name.isnot(None),
+            QRAssignment.business_name != "",
+            QRCode.status != QRStatus.UNASSIGNED,
+        )
+        .distinct().all() if r[0] and r[0].strip()
     ]
-    all_names = sorted(list(set(curr_names + hist_names)))
-    return [name for name in all_names if name]
+    
+    # Case-insensitive deduplication preserving clean canonical casing
+    case_map: Dict[str, str] = {}
+    for name in curr_names + hist_names:
+        key = name.lower()
+        if key not in case_map:
+            case_map[key] = name
+            
+    return sorted(list(case_map.values()))
 
 
 def _get_client_qr_ids(db: Session, client_name: str) -> List[int]:
-    """Get internal database IDs of all QR codes associated with a client."""
-    # QRs whose current business matches
+    """
+    Get internal database IDs of all QR codes associated with a client.
+    Strictly excludes unassigned QR codes and normalizes whitespace/casing.
+    """
+    cleaned_name = client_name.strip().lower()
+    
+    # QRs whose current business matches and is not UNASSIGNED
     direct_qr_ids = [
         r[0] for r in db.query(QRCode.id)
-        .filter(func.lower(QRCode.current_business_name) == client_name.lower())
+        .filter(
+            func.trim(func.lower(QRCode.current_business_name)) == cleaned_name,
+            QRCode.status != QRStatus.UNASSIGNED,
+        )
         .all()
     ]
     
@@ -46,6 +90,7 @@ def _get_client_qr_ids(db: Session, client_name: str) -> List[int]:
     
     hist_qr_ids = [
         r[0] for r in db.query(QRAssignment.qr_code_id)
+        .join(QRCode, QRCode.id == QRAssignment.qr_code_id)
         .join(
             latest_assign_subq,
             and_(
@@ -53,7 +98,10 @@ def _get_client_qr_ids(db: Session, client_name: str) -> List[int]:
                 QRAssignment.assigned_at == latest_assign_subq.c.max_assigned_at,
             )
         )
-        .filter(func.lower(QRAssignment.business_name) == client_name.lower())
+        .filter(
+            func.trim(func.lower(QRAssignment.business_name)) == cleaned_name,
+            QRCode.status != QRStatus.UNASSIGNED,
+        )
         .all()
     ]
     

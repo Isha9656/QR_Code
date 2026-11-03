@@ -148,7 +148,14 @@ async def public_redirect(token: str, request: Request, db: Session = Depends(ge
         return HTMLResponse(content=UNASSIGNED_HTML, status_code=404)
     
     # Log scan event (privacy-safe metadata only)
-    raw_ip = request.client.host if request.client else None
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        raw_ip = forwarded.split(",")[0].strip()
+    elif request.headers.get("x-real-ip"):
+        raw_ip = request.headers.get("x-real-ip").strip()
+    else:
+        raw_ip = request.client.host if request.client else None
+
     scan_event = QRScanEvent(
         qr_code_id=qr.id,
         result_type=qr.status.value if qr.status != QRStatus.ACTIVE else "redirect",
