@@ -212,3 +212,37 @@ def test_global_search_api():
     res_op = client.get("/api/search/global?q=PowerFit", headers={"Authorization": f"Bearer {op_token}"})
     assert res_op.status_code == 200
     assert len(res_op.json()["clients"]) >= 1
+
+
+def test_dashboard_scan_count_reconciliation_excludes_invalid_scans():
+    """
+    Regression test for Phase 4.2:
+    Dashboard analytics overview and client statistics must reconcile exactly.
+    Total public scans must count genuine redirects and exclude unassigned/invalid attempts.
+    """
+    token = _get_token("phase4_admin", "AdminSecure#2026")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    db = TestingSessionLocal()
+    # Find an active QR code
+    qr = db.query(QRCode).filter(QRCode.qr_id == "QR-000061").first()
+
+    # Get baseline scan count
+    baseline_overview = client.get("/api/analytics/overview", headers=headers).json()
+    baseline_redirects = baseline_overview["total_scans"]
+
+    # Record 1 genuine redirect and 2 non-redirect scan attempts (unassigned, disabled)
+    s_valid = QRScanEvent(qr_code_id=qr.id, result_type="redirect", user_agent="TestAgent", ip_address="127.0.0.1")
+    s_unassigned = QRScanEvent(qr_code_id=qr.id, result_type="unassigned", user_agent="TestAgent", ip_address="127.0.0.1")
+    s_disabled = QRScanEvent(qr_code_id=qr.id, result_type="disabled", user_agent="TestAgent", ip_address="127.0.0.1")
+    db.add_all([s_valid, s_unassigned, s_disabled])
+    db.commit()
+
+    # Query overview API
+    new_overview = client.get("/api/analytics/overview", headers=headers).json()
+    assert new_overview["total_scans"] == baseline_redirects + 1, (
+        f"Expected total_scans to increase by exactly 1 genuine redirect, but got {new_overview['total_scans']}"
+    )
+
+    db.close()
+
