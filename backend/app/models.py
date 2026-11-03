@@ -58,6 +58,7 @@ class QRCode(Base):
 
     __table_args__ = (
         Index("ix_qr_codes_status_created", "status", "created_at"),
+        Index("ix_qr_codes_current_business_name", "current_business_name"),
     )
 
 
@@ -86,6 +87,7 @@ class QRAssignment(Base):
         Index("ix_qr_assignments_active", "qr_code_id", "is_active",
               unique=True,
               sqlite_where=Column("is_active") == True),
+        Index("ix_qr_assignments_business_name", "business_name"),
     )
 
 
@@ -104,6 +106,7 @@ class QRScanEvent(Base):
 
     __table_args__ = (
         Index("ix_scan_events_date", "scanned_at"),
+        Index("ix_scan_events_qr_result_scanned", "qr_code_id", "result_type", "scanned_at"),
     )
 
 

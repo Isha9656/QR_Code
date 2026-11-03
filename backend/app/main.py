@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import get_settings
 from app.database import init_db, SessionLocal
 from app.auth import create_default_admin
-from app.routers import auth, qr, assignment, scanning, printing, analytics, admin
+from app.routers import auth, qr, assignment, scanning, printing, analytics, admin, clients
 
 settings = get_settings()
 
@@ -41,6 +41,7 @@ app.include_router(scanning.router)
 app.include_router(printing.router)
 app.include_router(analytics.router)
 app.include_router(admin.router)
+app.include_router(clients.router)
 
 
 @app.on_event("startup")

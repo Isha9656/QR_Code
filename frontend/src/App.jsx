@@ -4,6 +4,8 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import ScanPage from './pages/ScanPage';
 import InventoryPage from './pages/InventoryPage';
+import ClientsPage from './pages/ClientsPage';
+import ClientDetailPage from './pages/ClientDetailPage';
 import GeneratePage from './pages/GeneratePage';
 import SettingsPage from './pages/SettingsPage';
 import PrintStudioPage from './pages/PrintStudioPage';
@@ -75,6 +77,8 @@ function AppLayout() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/clients" element={<ClientsPage />} />
+          <Route path="/clients/:clientName" element={<ClientDetailPage />} />
           <Route path="/print-studio" element={isAdmin ? <PrintStudioPage /> : <Navigate to="/" replace />} />
           <Route path="/generate" element={isAdmin ? <GeneratePage /> : <Navigate to="/" replace />} />
           <Route path="/audit" element={isAdmin ? <AuditPage /> : <Navigate to="/" replace />} />
@@ -92,6 +96,10 @@ function AppLayout() {
         <NavLink to="/scan" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">📷</span>
           <span>Scan</span>
+        </NavLink>
+        <NavLink to="/clients" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <span className="nav-icon">🏢</span>
+          <span>Clients</span>
         </NavLink>
         <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">📋</span>

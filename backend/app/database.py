@@ -49,4 +49,10 @@ def init_db():
             if "status" not in audit_cols:
                 conn.execute(text("ALTER TABLE audit_logs ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'success'"))
                 conn.commit()
+            
+            # Performance indexes for client-wise aggregations and scan analytics
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_qr_codes_current_business_name ON qr_codes (current_business_name)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_qr_assignments_business_name ON qr_assignments (business_name)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scan_events_qr_result_scanned ON qr_scan_events (qr_code_id, result_type, scanned_at)"))
+            conn.commit()
 

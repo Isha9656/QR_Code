@@ -327,7 +327,9 @@ async def retire_qr(
     
     qr.status = QRStatus.RETIRED
     qr.current_destination = None
-    qr.current_business_name = None
+    # Preserve current_business_name for historical client attribution
+    if current_assignment and not qr.current_business_name:
+        qr.current_business_name = current_assignment.business_name
     
     audit = AuditLog(
         user_id=current_user.id,

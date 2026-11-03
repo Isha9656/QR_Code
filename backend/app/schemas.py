@@ -1,7 +1,7 @@
 import re
 import ipaddress
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from urllib.parse import urlparse
 
@@ -309,5 +309,104 @@ class AuditLogListResponse(BaseModel):
     page: int
     per_page: int
     total_pages: int
+
+
+# ---- Client-Wise QR Usage & Management Schemas ----
+
+class ClientSummaryCardResponse(BaseModel):
+    total_clients: int
+    total_qr_codes: int
+    active_qr_codes: int
+    disabled_qr_codes: int
+    retired_qr_codes: int
+    qr_codes_without_recent_usage: int
+
+
+class ClientListItemResponse(BaseModel):
+    client_name: str
+    total_qr_codes: int
+    active_qr_codes: int
+    disabled_qr_codes: int
+    retired_qr_codes: int
+    total_scans: int
+    last_scanned_at: Optional[datetime] = None
+    never_scanned_count: int
+    not_scanned_30d_count: int
+
+
+class ClientListResponse(BaseModel):
+    items: List[ClientListItemResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+    summary: ClientSummaryCardResponse
+
+
+class ClientQRDetailResponse(BaseModel):
+    id: int
+    qr_id: str
+    token: str
+    client_name: str
+    destination_url: Optional[str] = None
+    status: str
+    total_scans: int
+    scans_7d: int
+    scans_30d: int
+    last_scanned_at: Optional[datetime] = None
+    created_at: datetime
+    last_status_change: Optional[datetime] = None
+    is_never_scanned: bool
+    is_not_used_30d: bool
+
+    class Config:
+        from_attributes = True
+
+
+class ClientDetailResponse(BaseModel):
+    client_name: str
+    total_qr_codes: int
+    active_qr_codes: int
+    disabled_qr_codes: int
+    retired_qr_codes: int
+    total_scans: int
+    scans_7d: int
+    scans_30d: int
+    last_scanned_at: Optional[datetime] = None
+    never_scanned_count: int
+    not_scanned_30d_count: int
+    items: List[ClientQRDetailResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+
+class ClientBulkActionRequest(BaseModel):
+    qr_ids: List[str] = Field(..., min_length=1, description="List of QR IDs to apply action to")
+    confirmation: bool = Field(..., description="Must be True to confirm bulk action")
+
+
+class ClientBulkActionResponse(BaseModel):
+    client_name: str
+    action: str
+    requested_count: int
+    affected_count: int
+    affected_qr_ids: List[str]
+    skipped_count: int
+    message: str
+
+
+class ClientAnalyticsResponse(BaseModel):
+    client_name: str
+    date_range_days: int
+    daily_scans: List[Dict[str, Any]]
+    weekly_scans: List[Dict[str, Any]]
+    monthly_scans: List[Dict[str, Any]]
+    most_used_qrs: List[Dict[str, Any]]
+    least_used_qrs: List[Dict[str, Any]]
+    no_scan_qrs: List[Dict[str, Any]]
+    declining_qrs: List[Dict[str, Any]]
+
 
 

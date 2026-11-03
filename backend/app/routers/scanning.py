@@ -125,6 +125,19 @@ RETIRED_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+def _anonymize_ip(ip: str | None) -> str | None:
+    """Anonymize IP address for privacy-safe analytics (masks host octets)."""
+    if not ip:
+        return None
+    if ":" in ip:  # IPv6
+        parts = ip.split(":")
+        return ":".join(parts[:3]) + "::xxx" if len(parts) >= 3 else "ipv6"
+    parts = ip.split(".")
+    if len(parts) == 4:  # IPv4
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+    return "anonymized"
+
+
 @router.get("/q/{token}")
 @router.get("/qr/{token}")
 async def public_redirect(token: str, request: Request, db: Session = Depends(get_db)):
@@ -134,12 +147,13 @@ async def public_redirect(token: str, request: Request, db: Session = Depends(ge
     if not qr:
         return HTMLResponse(content=UNASSIGNED_HTML, status_code=404)
     
-    # Log scan event
+    # Log scan event (privacy-safe metadata only)
+    raw_ip = request.client.host if request.client else None
     scan_event = QRScanEvent(
         qr_code_id=qr.id,
         result_type=qr.status.value if qr.status != QRStatus.ACTIVE else "redirect",
         user_agent=request.headers.get("user-agent"),
-        ip_address=request.client.host if request.client else None,
+        ip_address=_anonymize_ip(raw_ip),
     )
     db.add(scan_event)
     db.commit()

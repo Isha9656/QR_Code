@@ -84,4 +84,32 @@ export const adminAPI = {
   getAuditLogs: (params) => api.get('/api/admin/audit-logs', { params }),
 };
 
+// Client-Wise QR Usage & Activation Management
+export const clientAPI = {
+  getOverview: () => api.get('/api/clients/overview'),
+  list: (params) => api.get('/api/clients', { params }),
+  getDetail: (clientName, params) =>
+    api.get(`/api/clients/${encodeURIComponent(clientName)}`, { params }),
+  getAnalytics: (clientName, days = 30) =>
+    api.get(`/api/clients/${encodeURIComponent(clientName)}/analytics?days=${days}`),
+  activateQR: (clientName, qrId) =>
+    api.post(`/api/clients/${encodeURIComponent(clientName)}/qr/${qrId}/activate`),
+  deactivateQR: (clientName, qrId) =>
+    api.post(`/api/clients/${encodeURIComponent(clientName)}/qr/${qrId}/deactivate`),
+  bulkActivate: (clientName, qrIds) =>
+    api.post(`/api/clients/${encodeURIComponent(clientName)}/bulk-activate`, {
+      qr_ids: qrIds,
+      confirmation: true,
+    }),
+  bulkDeactivate: (clientName, qrIds) =>
+    api.post(`/api/clients/${encodeURIComponent(clientName)}/bulk-deactivate`, {
+      qr_ids: qrIds,
+      confirmation: true,
+    }),
+  activateAll: (clientName) =>
+    api.post(`/api/clients/${encodeURIComponent(clientName)}/activate-all`),
+  deactivateAll: (clientName) =>
+    api.post(`/api/clients/${encodeURIComponent(clientName)}/deactivate-all`),
+};
+
 export default api;
