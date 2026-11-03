@@ -409,4 +409,38 @@ class ClientAnalyticsResponse(BaseModel):
     declining_qrs: List[Dict[str, Any]]
 
 
+# ---- Global Search Schemas ----
+
+class SearchQRResult(BaseModel):
+    id: int
+    qr_id: str
+    token: str
+    status: str
+    current_business_name: Optional[str] = None
+    current_destination: Optional[str] = None
+
+
+class SearchClientResult(BaseModel):
+    client_name: str
+    total_qrs: int
+    active_qrs: int
+
+
+class GlobalSearchResponse(BaseModel):
+    query: str
+    total_matches: int
+    qr_codes: List[SearchQRResult]
+    clients: List[SearchClientResult]
+
+
+# ---- Inventory Cleanup Schemas ----
+
+class TestQRsCleanupResponse(BaseModel):
+    success: bool
+    already_cleaned: bool = False
+    cleaned_count: int
+    cleaned_qr_ids: List[str]
+    message: str
+
+
 

@@ -1,5 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import Header from './components/Header';
+import Sidebar from './components/Sidebar';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import ScanPage from './pages/ScanPage';
@@ -24,110 +27,77 @@ function ProtectedRoute({ children }) {
 }
 
 function AppLayout() {
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin } = useAuth();
+
+  // Desktop sidebar collapse state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('qr_sidebar_collapsed') === 'true';
+  });
+
+  // Mobile drawer state
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const toggleSidebarCollapse = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('qr_sidebar_collapsed', String(next));
+      return next;
+    });
+  };
+
+  const toggleMobileMenu = () => {
+    setMobileOpen((prev) => !prev);
+  };
+
+  const closeMobileMenu = () => {
+    setMobileOpen(false);
+  };
 
   return (
-    <div className="app-layout">
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-is-collapsed' : 'sidebar-is-expanded'}`}>
       {/* Forced Password Change Security Banner */}
       {user?.must_change_password && (
-        <div style={{
-          background: '#dc2626',
-          color: '#ffffff',
-          padding: '8px 16px',
-          textAlign: 'center',
-          fontSize: '0.82rem',
-          fontWeight: '600',
-          position: 'sticky',
-          top: 0,
-          zIndex: 1000,
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          gap: '12px',
-        }}>
+        <div className="security-banner">
           <span>⚠️ Security Warning: Default credentials in use. Change password immediately!</span>
-          <NavLink
-            to="/settings"
-            style={{
-              background: '#ffffff',
-              color: '#dc2626',
-              padding: '3px 8px',
-              borderRadius: '4px',
-              textDecoration: 'none',
-              fontSize: '0.75rem',
-            }}
-          >
+          <NavLink to="/settings" className="security-banner-btn">
             Go to Settings
           </NavLink>
         </div>
       )}
 
-      {/* Top Bar */}
-      <header className="top-bar">
-        <h1>📱 QR Manager</h1>
-        <div className="user-info">
-          <span className="user-badge">{user?.role?.toUpperCase()}</span>
-          <button className="logout-btn" onClick={logout}>Logout</button>
-        </div>
-      </header>
+      {/* Unified Global Header */}
+      <Header
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebarCollapse={toggleSidebarCollapse}
+        onToggleMobileMenu={toggleMobileMenu}
+      />
 
-      {/* Page Content */}
-      <main className="page-container">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/scan" element={<ScanPage />} />
-          <Route path="/inventory" element={<InventoryPage />} />
-          <Route path="/clients" element={<ClientsPage />} />
-          <Route path="/clients/:clientName" element={<ClientDetailPage />} />
-          <Route path="/print-studio" element={isAdmin ? <PrintStudioPage /> : <Navigate to="/" replace />} />
-          <Route path="/generate" element={isAdmin ? <GeneratePage /> : <Navigate to="/" replace />} />
-          <Route path="/audit" element={isAdmin ? <AuditPage /> : <Navigate to="/" replace />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
+      <div className="app-body">
+        {/* Collapsible Left Sidebar / Mobile Drawer */}
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          mobileOpen={mobileOpen}
+          onCloseMobile={closeMobileMenu}
+        />
 
-      {/* Bottom Navigation */}
-      <nav className="bottom-nav">
-        <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end>
-          <span className="nav-icon">📊</span>
-          <span>Dashboard</span>
-        </NavLink>
-        <NavLink to="/scan" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon">📷</span>
-          <span>Scan</span>
-        </NavLink>
-        <NavLink to="/clients" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon">🏢</span>
-          <span>Clients</span>
-        </NavLink>
-        <NavLink to="/inventory" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon">📋</span>
-          <span>Inventory</span>
-        </NavLink>
-        {isAdmin && (
-          <NavLink to="/print-studio" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <span className="nav-icon">🖨️</span>
-            <span>Studio</span>
-          </NavLink>
-        )}
-        {isAdmin && (
-          <NavLink to="/audit" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <span className="nav-icon">🛡️</span>
-            <span>Audit</span>
-          </NavLink>
-        )}
-        {isAdmin && (
-          <NavLink to="/generate" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <span className="nav-icon">⚡</span>
-            <span>Generate</span>
-          </NavLink>
-        )}
-        <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon">⚙️</span>
-          <span>Settings</span>
-        </NavLink>
-      </nav>
+        {/* Main Content Area */}
+        <main className="main-content-viewport">
+          <div className="page-content-wrapper">
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/inventory" element={<InventoryPage />} />
+              <Route path="/scan" element={<ScanPage />} />
+              <Route path="/clients" element={<ClientsPage />} />
+              <Route path="/clients/:clientName" element={<ClientDetailPage />} />
+              <Route path="/print-studio" element={isAdmin ? <PrintStudioPage /> : <Navigate to="/" replace />} />
+              <Route path="/generate" element={isAdmin ? <GeneratePage /> : <Navigate to="/" replace />} />
+              <Route path="/audit" element={isAdmin ? <AuditPage /> : <Navigate to="/" replace />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

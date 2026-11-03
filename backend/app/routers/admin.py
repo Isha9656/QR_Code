@@ -164,3 +164,20 @@ async def get_audit_logs(
         total_pages=total_pages,
     )
 
+
+@router.post("/inventory/cleanup-test-data", response_model=AuditLogResponse if False else dict)
+async def cleanup_test_data_endpoint(
+    admin: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Clean up confirmed test QR codes (Option A) transactionally.
+    Reverts QR-000063, QR-000083, QR-000111, QR-000121, QR-000131, QR-000141 to unassigned inventory.
+    Admin only.
+    """
+    from app.services.cleanup_service import verify_and_cleanup_test_qrs
+    try:
+        return verify_and_cleanup_test_qrs(db, admin)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
