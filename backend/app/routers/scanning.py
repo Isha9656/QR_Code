@@ -125,16 +125,102 @@ RETIRED_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+import ipaddress
+from app.config import get_settings
+
+
+def is_ip_in_networks(ip_str: str, networks: list, hosts: set) -> bool:
+    """Check if an IP string is in the trusted network/host list."""
+    if not ip_str:
+        return False
+    cleaned = ip_str.strip().lower()
+    if cleaned in hosts:
+        return True
+    try:
+        addr = ipaddress.ip_address(cleaned)
+        return any(addr in net for net in networks)
+    except ValueError:
+        return False
+
+
+def extract_client_ip(request: Request) -> str | None:
+    """
+    Safely extract the client IP address according to reverse proxy trust boundaries:
+    - Never blindly trust forwarded headers from arbitrary clients.
+    - Only accept forwarded IP information from explicitly configured trusted proxies.
+    - Use direct request client address when no trusted proxy is configured.
+    - Safely handle multiple forwarded IP entries (walk from rightmost trusted proxy).
+    """
+    direct_peer = request.client.host if request.client else None
+    if not direct_peer:
+        return None
+
+    settings = get_settings()
+    trusted_networks = settings.trusted_proxy_networks
+    trusted_hosts = settings.trusted_proxy_hosts
+
+    # 1. If no trusted proxies configured, NEVER trust forwarded headers
+    if not trusted_networks and not trusted_hosts:
+        return direct_peer
+
+    # 2. If direct peer is NOT a trusted proxy, ignore all forwarded headers
+    if not is_ip_in_networks(direct_peer, trusted_networks, trusted_hosts):
+        return direct_peer
+
+    # 3. Direct peer IS trusted: parse X-Forwarded-For safely from right to left
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        # e.g., "forged_client, real_client, proxy1"
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        # Walk from right to left: skip trusted proxies; the first untrusted is the client
+        for candidate in reversed(parts):
+            if not is_ip_in_networks(candidate, trusted_networks, trusted_hosts):
+                try:
+                    ipaddress.ip_address(candidate)
+                    return candidate
+                except ValueError:
+                    continue
+        # If all candidates were in trusted network, return the leftmost valid IP
+        for candidate in parts:
+            try:
+                ipaddress.ip_address(candidate)
+                return candidate
+            except ValueError:
+                continue
+
+    # 4. Fallback to X-Real-IP if provided, valid, and from trusted proxy
+    x_real_ip = request.headers.get("x-real-ip")
+    if x_real_ip:
+        candidate = x_real_ip.strip()
+        try:
+            ipaddress.ip_address(candidate)
+            return candidate
+        except ValueError:
+            pass
+
+    return direct_peer
+
+
 def _anonymize_ip(ip: str | None) -> str | None:
-    """Anonymize IP address for privacy-safe analytics (masks host octets)."""
+    """
+    Anonymize IP address for privacy-safe analytics.
+    - IPv4: Zeroes host octet (/24 subnet mask, e.g., 198.51.100.45 -> 198.51.100.0).
+    - IPv6: Zeroes host interface (/48 subnet mask, e.g., 2001:db8:85a3:8d3:: -> 2001:db8:85a3::).
+    - Non-IP strings / local identifiers -> 'anonymized'.
+    - Raw client IP addresses are NEVER stored.
+    """
     if not ip:
         return None
-    if ":" in ip:  # IPv6
-        parts = ip.split(":")
-        return ":".join(parts[:3]) + "::xxx" if len(parts) >= 3 else "ipv6"
-    parts = ip.split(".")
-    if len(parts) == 4:  # IPv4
-        return f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+    try:
+        addr = ipaddress.ip_address(ip.strip())
+        if addr.version == 4:
+            net = ipaddress.IPv4Network(f"{addr}/24", strict=False)
+            return str(net.network_address)
+        elif addr.version == 6:
+            net = ipaddress.IPv6Network(f"{addr}/48", strict=False)
+            return str(net.network_address)
+    except ValueError:
+        pass
     return "anonymized"
 
 
@@ -147,20 +233,15 @@ async def public_redirect(token: str, request: Request, db: Session = Depends(ge
     if not qr:
         return HTMLResponse(content=UNASSIGNED_HTML, status_code=404)
     
-    # Log scan event (privacy-safe metadata only)
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        raw_ip = forwarded.split(",")[0].strip()
-    elif request.headers.get("x-real-ip"):
-        raw_ip = request.headers.get("x-real-ip").strip()
-    else:
-        raw_ip = request.client.host if request.client else None
+    # Log scan event with safely extracted and anonymized client IP
+    client_ip = extract_client_ip(request)
+    anonymized_ip = _anonymize_ip(client_ip)
 
     scan_event = QRScanEvent(
         qr_code_id=qr.id,
         result_type=qr.status.value if qr.status != QRStatus.ACTIVE else "redirect",
         user_agent=request.headers.get("user-agent"),
-        ip_address=_anonymize_ip(raw_ip),
+        ip_address=anonymized_ip,
     )
     db.add(scan_event)
     db.commit()

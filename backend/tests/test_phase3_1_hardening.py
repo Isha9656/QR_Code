@@ -131,7 +131,7 @@ def test_operator_permissions_can_assign_toggle():
     qr_id = gen_resp.json()[0]["qr_id"]
     
     # Case A: When OPERATOR_CAN_ASSIGN is True (default)
-    settings.OPERATOR_CAN_ASSIGN = True
+    get_settings().OPERATOR_CAN_ASSIGN = True
     assign_resp = client.post(
         f"/api/qr/{qr_id}/assign",
         json={"business_name": "Test Cafe", "destination_url": "https://testcafe.com"},
@@ -149,7 +149,7 @@ def test_operator_permissions_can_assign_toggle():
     qr_id_2 = gen_resp2.json()[0]["qr_id"]
     
     # Case B: When OPERATOR_CAN_ASSIGN is False
-    settings.OPERATOR_CAN_ASSIGN = False
+    get_settings().OPERATOR_CAN_ASSIGN = False
     try:
         blocked_resp = client.post(
             f"/api/qr/{qr_id_2}/assign",
@@ -168,7 +168,7 @@ def test_operator_permissions_can_assign_toggle():
         assert admin_assign.status_code == 200
     finally:
         # Restore default
-        settings.OPERATOR_CAN_ASSIGN = True
+        get_settings().OPERATOR_CAN_ASSIGN = True
 
 
 def test_operator_forbidden_from_admin_endpoints():

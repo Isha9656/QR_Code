@@ -143,8 +143,12 @@ def test_client_inventory_counts_and_unassigned_exclusion():
     db.close()
 
 
-def test_public_scan_tracking_vs_camera_preview_and_latency():
+def test_public_scan_tracking_vs_camera_preview_and_latency(monkeypatch):
     """Verify public redirect tracking, camera preview separation, invalid token exclusion, and redirect speed."""
+    from app.config import get_settings
+    monkeypatch.setenv("TRUSTED_PROXIES", "testclient,127.0.0.1")
+    get_settings.cache_clear()
+
     db = TestingSessionLocal()
     q1 = db.query(QRCode).filter(QRCode.qr_id == "QR-ALP01").first()
     token = q1.token
