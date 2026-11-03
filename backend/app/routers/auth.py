@@ -14,12 +14,13 @@ from app.models import User, UserRole, AuditLog, RevokedToken
 from app.schemas import (
     LoginRequest, TokenResponse, UserResponse, PasswordChangeRequest, CreateUserRequest
 )
+from app.config import get_settings
 from app.core.limiter import limiter
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 
 @router.post("/login", response_model=TokenResponse)
-@limiter.limit("10/minute")
+@limiter.limit(lambda: get_settings().RATE_LIMIT_AUTH)
 async def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate user, return JWT token with unique jti, and check must_change_password."""
     user = db.query(User).filter(

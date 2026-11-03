@@ -1,4 +1,5 @@
 import re
+import ipaddress
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field, field_validator
@@ -105,6 +106,45 @@ class QRCodeListResponse(BaseModel):
 
 # ---- Assignment Schemas ----
 
+def _validate_destination_url_security(v: str) -> str:
+    """Harden URL validation to permit public domains and public IPs while blocking SSRF/metadata/loopback/unsafe schemes."""
+    if not v or not isinstance(v, str):
+        raise ValueError("Destination URL must be a non-empty string")
+    v = v.strip()
+    if any(c.isspace() for c in v):
+        raise ValueError("URL cannot contain whitespace")
+    parsed = urlparse(v)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError("Only HTTP and HTTPS URLs are allowed")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs with embedded credentials are not allowed")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Invalid URL: missing domain or hostname")
+    
+    # Check if hostname is an IP address
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_loopback:
+            raise ValueError(f"Loopback IP address '{hostname}' is not permitted")
+        if ip.is_link_local:
+            raise ValueError(f"Link-local / cloud metadata IP address '{hostname}' is not permitted")
+        if ip.is_unspecified:
+            raise ValueError(f"Unspecified IP address '{hostname}' is not permitted")
+        if str(ip) in {"169.254.169.254", "0.0.0.0"}:
+            raise ValueError(f"Destination IP '{hostname}' is not permitted")
+    except ValueError as e:
+        if "not permitted" in str(e):
+            raise
+        # Not a valid IP, so it must be a regular domain/hostname
+        if not re.match(r"^[a-zA-Z0-9.-]+$", hostname):
+            raise ValueError("Invalid hostname: contains disallowed characters")
+        if hostname.startswith(".") or hostname.endswith(".") or ".." in hostname:
+            raise ValueError("Invalid hostname: improper domain structure")
+    return v
+
+
 class AssignRequest(BaseModel):
     business_name: str = Field(..., min_length=1, max_length=200)
     destination_url: str = Field(..., min_length=1)
@@ -114,25 +154,7 @@ class AssignRequest(BaseModel):
     @field_validator("destination_url")
     @classmethod
     def validate_url(cls, v):
-        if not v or not isinstance(v, str):
-            raise ValueError("Destination URL must be a non-empty string")
-        v = v.strip()
-        if any(c.isspace() for c in v):
-            raise ValueError("URL cannot contain whitespace")
-        parsed = urlparse(v)
-        scheme = parsed.scheme.lower()
-        if scheme not in ("http", "https"):
-            raise ValueError("Only HTTP and HTTPS URLs are allowed")
-        if parsed.username or parsed.password:
-            raise ValueError("URLs with embedded credentials are not allowed")
-        hostname = parsed.hostname
-        if not hostname:
-            raise ValueError("Invalid URL: missing domain or hostname")
-        if not re.match(r"^[a-zA-Z0-9.-]+$", hostname):
-            raise ValueError("Invalid hostname: contains disallowed characters")
-        if hostname.lower() in {"169.254.169.254", "0.0.0.0"}:
-            raise ValueError(f"Destination hostname '{hostname}' is not permitted")
-        return v
+        return _validate_destination_url_security(v)
 
 
 class ReassignRequest(BaseModel):
@@ -145,25 +167,7 @@ class ReassignRequest(BaseModel):
     @field_validator("destination_url")
     @classmethod
     def validate_url(cls, v):
-        if not v or not isinstance(v, str):
-            raise ValueError("Destination URL must be a non-empty string")
-        v = v.strip()
-        if any(c.isspace() for c in v):
-            raise ValueError("URL cannot contain whitespace")
-        parsed = urlparse(v)
-        scheme = parsed.scheme.lower()
-        if scheme not in ("http", "https"):
-            raise ValueError("Only HTTP and HTTPS URLs are allowed")
-        if parsed.username or parsed.password:
-            raise ValueError("URLs with embedded credentials are not allowed")
-        hostname = parsed.hostname
-        if not hostname:
-            raise ValueError("Invalid URL: missing domain or hostname")
-        if not re.match(r"^[a-zA-Z0-9.-]+$", hostname):
-            raise ValueError("Invalid hostname: contains disallowed characters")
-        if hostname.lower() in {"169.254.169.254", "0.0.0.0"}:
-            raise ValueError(f"Destination hostname '{hostname}' is not permitted")
-        return v
+        return _validate_destination_url_security(v)
 
 
 class AssignmentResponse(BaseModel):

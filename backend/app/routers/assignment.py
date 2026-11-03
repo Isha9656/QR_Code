@@ -8,6 +8,7 @@ from app.models import User, UserRole, QRCode, QRAssignment, QRStatus, AuditLog
 from app.schemas import (
     AssignRequest, ReassignRequest, AssignmentResponse, AssignmentHistoryResponse
 )
+from app.config import get_settings
 import json
 
 router = APIRouter(prefix="/api/qr", tags=["Assignment"])
@@ -65,8 +66,20 @@ async def assign_qr(
     db: Session = Depends(get_db),
 ):
     """Assign a destination to an unassigned QR code."""
+    settings = get_settings()
+    if current_user.role == UserRole.OPERATOR and not settings.OPERATOR_CAN_ASSIGN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operator assignment is disabled by system administrator.",
+        )
+    
     qr = _resolve_qr(qr_id_or_db_id, db)
     
+    if qr.status == QRStatus.RETIRED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot assign a retired QR code. Retirement is permanent.",
+        )
     if qr.status != QRStatus.UNASSIGNED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
