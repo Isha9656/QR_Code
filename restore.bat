@@ -10,7 +10,15 @@ echo.
 pause
 
 cd /d "%~dp0backend"
-python restore_database.py %1
+if exist "venv\Scripts\python.exe" (
+    set "PYTHON_EXE=venv\Scripts\python.exe"
+) else if exist "..\venv\Scripts\python.exe" (
+    set "PYTHON_EXE=..\venv\Scripts\python.exe"
+) else (
+    set "PYTHON_EXE=python"
+)
+
+%PYTHON_EXE% restore_database.py %1
 
 echo.
 pause

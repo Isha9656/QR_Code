@@ -13,7 +13,7 @@ cd /d "%~dp0"
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python is not found in PATH!
-    echo Please install Python 3.10+ and add it to PATH.
+    echo Please install Python 3.10+ and ensure "Add Python to PATH" is checked.
     pause
     exit /b 1
 )
@@ -22,35 +22,68 @@ for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo [+] Found %%v
 :: 2. Check Node / npm
 npm --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] npm is not found in PATH!
-    echo Please install Node.js and add it to PATH.
+    echo [ERROR] Node.js / npm is not found in PATH!
+    echo Please install Node.js (v18+) from https://nodejs.org/ and add to PATH.
     pause
     exit /b 1
 )
 for /f "tokens=*" %%v in ('node --version 2^>^&1') do echo [+] Found Node %%v
+for /f "tokens=*" %%v in ('npm --version 2^>^&1') do echo [+] Found npm v%%v
 
-:: 3. Python Virtualenv / Command detection
-if exist "backend\venv\Scripts\activate.bat" (
-    echo [+] Activating backend venv...
-    set "PY_CMD=call "%~dp0backend\venv\Scripts\activate.bat" && python"
-) else if exist "venv\Scripts\activate.bat" (
-    echo [+] Activating root venv...
-    set "PY_CMD=call "%~dp0venv\Scripts\activate.bat" && python"
+:: 3. Python executable detection
+if exist "%~dp0backend\venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%~dp0backend\venv\Scripts\python.exe"
+    echo [+] Using backend virtual environment
+) else if exist "%~dp0venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%~dp0venv\Scripts\python.exe"
+    echo [+] Using root virtual environment
 ) else (
-    set "PY_CMD=python"
+    set "PYTHON_EXE=python"
 )
 
-:: 4. Frontend node_modules check
-if not exist "frontend\node_modules\" (
-    echo [!] Frontend dependencies not found. Installing via npm install...
+:: 4. Verify / install backend dependencies
+echo [+] Checking backend dependencies...
+"%PYTHON_EXE%" -c "import fastapi, uvicorn, slowapi, sqlalchemy, qrcode, pydantic_settings, jose, passlib" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [!] Backend dependencies missing or incomplete.
+    echo [+] Installing dependencies from backend\requirements.txt...
+    "%PYTHON_EXE%" -m pip install -r "%~dp0backend\requirements.txt"
+    if %errorlevel% neq 0 (
+        echo [ERROR] Failed to install backend dependencies!
+        pause
+        exit /b 1
+    )
+    echo [+] Backend dependencies installed successfully.
+) else (
+    echo [+] Backend dependencies verified.
+)
+
+:: 5. Verify / install frontend dependencies
+if not exist "%~dp0frontend\node_modules\" (
+    echo [!] Frontend dependencies not found.
+    echo [+] Running npm install in frontend directory...
     cd /d "%~dp0frontend"
     call npm install
     if %errorlevel% neq 0 (
-        echo [ERROR] npm install failed!
+        echo [ERROR] Failed to install frontend dependencies!
         pause
         exit /b 1
     )
     cd /d "%~dp0"
+    echo [+] Frontend dependencies installed successfully.
+) else (
+    echo [+] Frontend dependencies verified.
+)
+
+:: 6. Clean up any stale processes on port 8000 or 5173 to avoid port collisions
+echo [+] Checking for conflicting ports...
+for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr :8000 ^| findstr LISTENING') do (
+    echo [!] Freeing busy port 8000 (PID: %%a)...
+    taskkill /F /PID %%a >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr :5173 ^| findstr LISTENING') do (
+    echo [!] Freeing busy port 5173 (PID: %%a)...
+    taskkill /F /PID %%a >nul 2>&1
 )
 
 echo.
@@ -62,20 +95,25 @@ echo     Swagger Docs : http://localhost:8000/api/docs
 echo =======================================================
 echo.
 
-:: 5. Launch Backend in separate window
-start "QR Backend (FastAPI)" cmd /k "title QR Backend (FastAPI :8000) ^& cd /d "%~dp0backend" ^& %PY_CMD% -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+:: 7. Launch Backend in separate window using dedicated script
+start "QR Backend (FastAPI)" cmd /c ""%~dp0backend\start_backend.bat""
 
-:: 6. Launch Frontend in separate window
-start "QR Frontend (Vite)" cmd /k "title QR Frontend (Vite :5173) ^& cd /d "%~dp0frontend" ^& npm run dev"
+:: 8. Launch Frontend in separate window using dedicated script
+start "QR Frontend (Vite)" cmd /c ""%~dp0frontend\start_frontend.bat""
 
-:: 7. Wait briefly and open browser
+:: 9. Wait briefly and open browser
 echo [+] Waiting for services to initialize...
-timeout /t 3 /nobreak >nul
+timeout /t 4 /nobreak >nul
 start http://localhost:5173
 
 echo.
-echo [+] Internal QR Management System is running!
-echo [+] Backend and Frontend are running in separate terminal windows.
-echo [+] Run stop.bat or close the windows to stop the servers.
+echo =======================================================
+echo   QR Management System is now running!
+echo   - Backend API  : http://localhost:8000
+echo   - Frontend PWA : http://localhost:5173
+echo.
+echo   To STOP the system, run stop.bat or close
+echo   the Backend and Frontend terminal windows.
+echo =======================================================
 echo.
 pause
