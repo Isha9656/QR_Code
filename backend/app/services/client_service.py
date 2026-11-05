@@ -9,18 +9,11 @@ from app.models import QRCode, QRAssignment, QRScanEvent, QRStatus, AuditLog, Us
 
 def get_distinct_client_names(db: Session) -> List[str]:
     """
-    Retrieve normalized unique client/business names across active, disabled, and retired assignments.
-    Excludes unassigned QR codes and deduplicates case/whitespace variations.
+    Retrieve normalized unique client/business names across ALL assignments
+    (current and historical), so that clients who previously owned QR codes
+    but no longer own any are still listed for historical analytics.
+    Deduplicates case/whitespace variations.
     """
-    latest_assign_subq = (
-        db.query(
-            QRAssignment.qr_code_id,
-            func.max(QRAssignment.assigned_at).label("max_assigned_at")
-        )
-        .group_by(QRAssignment.qr_code_id)
-        .subquery()
-    )
-    
     # 1. Names from current non-unassigned QR codes
     curr_names = [
         r[0].strip() for r in db.query(QRCode.current_business_name)
@@ -32,21 +25,14 @@ def get_distinct_client_names(db: Session) -> List[str]:
         .distinct().all() if r[0] and r[0].strip()
     ]
     
-    # 2. Names from most recent assignment of retired or active/disabled QRs
+    # 2. Names from ALL assignment history (not just the latest assignment)
+    #    This ensures historical-only clients like "Nasta Ghar" appear even if
+    #    their QR codes have since been reassigned to another client.
     hist_names = [
         r[0].strip() for r in db.query(QRAssignment.business_name)
-        .join(QRCode, QRCode.id == QRAssignment.qr_code_id)
-        .join(
-            latest_assign_subq,
-            and_(
-                QRAssignment.qr_code_id == latest_assign_subq.c.qr_code_id,
-                QRAssignment.assigned_at == latest_assign_subq.c.max_assigned_at,
-            )
-        )
         .filter(
             QRAssignment.business_name.isnot(None),
             QRAssignment.business_name != "",
-            QRCode.status != QRStatus.UNASSIGNED,
         )
         .distinct().all() if r[0] and r[0].strip()
     ]
@@ -106,6 +92,207 @@ def _get_client_qr_ids(db: Session, client_name: str) -> List[int]:
     ]
     
     return sorted(list(set(direct_qr_ids + hist_qr_ids)))
+
+
+def _attribute_scan_to_client(
+    db: Session,
+    scan: QRScanEvent,
+) -> Optional[str]:
+    """
+    Determine which client a scan should be attributed to based on
+    which assignment was active at the time of the scan.
+
+    Business rules:
+    - A scan is attributed to the client whose assignment was active when the scan occurred.
+    - If a QR code has been transferred, historical scans remain with the original client.
+    - An assignment is active from its assigned_at up to its deactivated_at (or indefinitely if active).
+    - If a subsequent assignment exists starting at T_next, the prior assignment ends at T_next.
+      A scan occurring exactly at T_next belongs to the new assignment.
+    - If a scan occurs exactly at deactivated_at and no subsequent assignment exists, it belongs
+      to that assignment (since it was active up to deactivation).
+    - If multiple different clients have overlapping assignments active at scanned_at, history
+      is ambiguous: return None (unattributed) rather than silently misattributing.
+    - If no assignment was active at scanned_at (e.g. scan before initial assignment or after deactivation),
+      return None (unattributed).
+    - Scans are never double-counted.
+    """
+    candidate_assignments = (
+        db.query(QRAssignment)
+        .filter(
+            QRAssignment.qr_code_id == scan.qr_code_id,
+            QRAssignment.assigned_at <= scan.scanned_at,
+        )
+        .order_by(QRAssignment.assigned_at.asc())
+        .all()
+    )
+
+    if not candidate_assignments:
+        return None
+
+    active_matches = []
+    for assign in candidate_assignments:
+        # Determine if a subsequent assignment for this QR code superseded this one
+        next_assign = (
+            db.query(QRAssignment)
+            .filter(
+                QRAssignment.qr_code_id == scan.qr_code_id,
+                QRAssignment.assigned_at > assign.assigned_at,
+            )
+            .order_by(QRAssignment.assigned_at.asc())
+            .first()
+        )
+
+        if next_assign and next_assign.assigned_at <= scan.scanned_at:
+            # Superseded before or at scanned_at by the next assignment
+            continue
+
+        # Check deactivated_at boundary
+        if assign.deactivated_at is not None:
+            if next_assign:
+                # Next assignment takes over at next_assign.assigned_at
+                if scan.scanned_at >= next_assign.assigned_at:
+                    continue
+            else:
+                # No next assignment: valid up to and including deactivated_at
+                if scan.scanned_at > assign.deactivated_at:
+                    continue
+
+        active_matches.append(assign)
+
+    if not active_matches:
+        return None
+
+    # Check for ambiguity: if multiple assignments from DIFFERENT clients match, it is ambiguous
+    distinct_clients = {
+        a.business_name.strip()
+        for a in active_matches
+        if a.business_name and a.business_name.strip()
+    }
+
+    if len(distinct_clients) == 1:
+        return next(iter(distinct_clients))
+    elif len(distinct_clients) > 1:
+        # Ambiguous overlapping history: return None to avoid silent misattribution
+        return None
+
+    return None
+
+
+def _get_historical_scan_attribution(
+    db: Session,
+    client_name: str,
+    qr_code_ids: Optional[List[int]] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> List[QRScanEvent]:
+    """
+    Return all redirect scan events historically attributed to a client.
+
+    For each redirect scan on the given QR codes (or all QR codes if none specified),
+    checks which assignment was active at scan time and includes the scan only if
+    that assignment belongs to the specified client.
+
+    This ensures that historical scans are never misattributed to a QR code's
+    current owner when the QR has been transferred between clients.
+    """
+    cleaned_name = client_name.strip().lower()
+
+    # Get all assignments for this client (any QR code, any time)
+    client_assignments = (
+        db.query(QRAssignment)
+        .filter(
+            func.trim(func.lower(QRAssignment.business_name)) == cleaned_name,
+        )
+        .all()
+    )
+
+    if not client_assignments:
+        return []
+
+    # Build a set of QR code IDs that were ever assigned to this client
+    client_qr_ids = list(set(a.qr_code_id for a in client_assignments))
+
+    # If caller provided a subset, intersect
+    if qr_code_ids is not None:
+        client_qr_ids = [qid for qid in client_qr_ids if qid in qr_code_ids]
+
+    if not client_qr_ids:
+        return []
+
+    # Query all redirect scans on those QR codes
+    scan_query = (
+        db.query(QRScanEvent)
+        .filter(
+            QRScanEvent.qr_code_id.in_(client_qr_ids),
+            QRScanEvent.result_type == "redirect",
+        )
+    )
+    if start_date:
+        scan_query = scan_query.filter(QRScanEvent.scanned_at >= start_date)
+    if end_date:
+        scan_query = scan_query.filter(QRScanEvent.scanned_at <= end_date)
+
+    all_scans = scan_query.order_by(QRScanEvent.scanned_at).all()
+
+    # Filter: only include scans where the active assignment at scan time belongs to this client
+    attributed_scans = []
+    for scan in all_scans:
+        owner = _attribute_scan_to_client(db, scan)
+        if owner and owner.lower() == cleaned_name:
+            attributed_scans.append(scan)
+
+    return attributed_scans
+
+
+def _count_historical_scans(
+    db: Session,
+    client_name: str,
+    qr_code_ids: Optional[List[int]] = None,
+    start_date: Optional[datetime] = None,
+) -> int:
+    """Count redirect scans historically attributed to a client."""
+    scans = _get_historical_scan_attribution(
+        db, client_name, qr_code_ids=qr_code_ids, start_date=start_date
+    )
+    return len(scans)
+
+
+def _get_historical_scan_stats_per_qr(
+    db: Session,
+    client_name: str,
+    qr_code_ids: Optional[List[int]] = None,
+) -> Dict[int, Dict[str, Any]]:
+    """
+    Get per-QR scan statistics using historical attribution.
+    Returns a dict keyed by qr_code_id with total_scans, last_scanned_at,
+    scans_7d, scans_30d for scans attributed to the given client.
+    """
+    now = datetime.utcnow()
+    seven_days_ago = now - timedelta(days=7)
+    thirty_days_ago = now - timedelta(days=30)
+
+    scans = _get_historical_scan_attribution(db, client_name, qr_code_ids=qr_code_ids)
+
+    stats: Dict[int, Dict[str, Any]] = {}
+    for scan in scans:
+        qid = scan.qr_code_id
+        if qid not in stats:
+            stats[qid] = {
+                "total_scans": 0,
+                "last_scanned_at": None,
+                "scans_7d": 0,
+                "scans_30d": 0,
+            }
+        s = stats[qid]
+        s["total_scans"] += 1
+        if s["last_scanned_at"] is None or scan.scanned_at > s["last_scanned_at"]:
+            s["last_scanned_at"] = scan.scanned_at
+        if scan.scanned_at >= seven_days_ago:
+            s["scans_7d"] += 1
+        if scan.scanned_at >= thirty_days_ago:
+            s["scans_30d"] += 1
+
+    return stats
 
 
 def get_clients_overview_summary(db: Session) -> Dict[str, Any]:
@@ -175,58 +362,40 @@ def get_clients_list(
     client_records = []
     
     for client in client_names:
+        # Current QR inventory (for QR count and status metrics)
         qr_ids = _get_client_qr_ids(db, client)
-        if not qr_ids:
-            continue
         
-        qrs = db.query(QRCode).filter(QRCode.id.in_(qr_ids)).all()
+        qrs = db.query(QRCode).filter(QRCode.id.in_(qr_ids)).all() if qr_ids else []
         total_qrs = len(qrs)
         active_cnt = sum(1 for q in qrs if q.status == QRStatus.ACTIVE)
         disabled_cnt = sum(1 for q in qrs if q.status == QRStatus.DISABLED)
         retired_cnt = sum(1 for q in qrs if q.status == QRStatus.RETIRED)
         
-        # Scans for this client's QR codes
-        scan_stats = (
-            db.query(
-                func.count(QRScanEvent.id).label("total_scans"),
-                func.max(QRScanEvent.scanned_at).label("last_scanned_at"),
-            )
-            .filter(
-                QRScanEvent.qr_code_id.in_(qr_ids),
-                QRScanEvent.result_type == "redirect",
-            )
-            .first()
+        # Historical scan attribution: count only scans that occurred while
+        # this client's assignment was active, NOT all scans on currently-owned QRs.
+        attributed_scans = _get_historical_scan_attribution(db, client)
+        total_scans = len(attributed_scans)
+        last_scanned_at = max(
+            (s.scanned_at for s in attributed_scans), default=None
         )
-        total_scans = scan_stats[0] if scan_stats and scan_stats[0] else 0
-        last_scanned_at = scan_stats[1] if scan_stats else None
         
-        # QRs with scans
-        scanned_qr_ids_set = set(
-            r[0] for r in db.query(QRScanEvent.qr_code_id)
-            .filter(
-                QRScanEvent.qr_code_id.in_(qr_ids),
-                QRScanEvent.result_type == "redirect",
-            )
-            .distinct()
-            .all()
-        )
+        # QRs with historically attributed scans
+        scanned_qr_ids_set = set(s.qr_code_id for s in attributed_scans)
         never_scanned_cnt = sum(1 for q in qrs if q.id not in scanned_qr_ids_set)
         
-        # QRs with recent scans (last 30d)
+        # QRs with recent historically attributed scans (last 30d)
         recent_scanned_qr_ids_set = set(
-            r[0] for r in db.query(QRScanEvent.qr_code_id)
-            .filter(
-                QRScanEvent.qr_code_id.in_(qr_ids),
-                QRScanEvent.result_type == "redirect",
-                QRScanEvent.scanned_at >= thirty_days_ago,
-            )
-            .distinct()
-            .all()
+            s.qr_code_id for s in attributed_scans
+            if s.scanned_at >= thirty_days_ago
         )
         not_scanned_30d_cnt = sum(
             1 for q in qrs
             if q.status in [QRStatus.ACTIVE, QRStatus.DISABLED] and q.id not in recent_scanned_qr_ids_set
         )
+        
+        # Skip clients with no current QRs AND no historical scans
+        if total_qrs == 0 and total_scans == 0:
+            continue
         
         client_records.append({
             "client_name": client,
@@ -285,17 +454,23 @@ def get_client_details(
     thirty_days_ago = now - timedelta(days=30)
     
     if not qr_ids:
-        # Check if client exists but has no QRs currently
+        # Client may have no current QRs but still have historical scans.
+        # Check for historical scan attribution.
+        hist_scans = _get_historical_scan_attribution(db, client_name)
+        hist_total = len(hist_scans)
+        hist_last = max((s.scanned_at for s in hist_scans), default=None)
+        hist_7d = sum(1 for s in hist_scans if s.scanned_at >= seven_days_ago)
+        hist_30d = sum(1 for s in hist_scans if s.scanned_at >= thirty_days_ago)
         return {
             "client_name": client_name,
             "total_qr_codes": 0,
             "active_qr_codes": 0,
             "disabled_qr_codes": 0,
             "retired_qr_codes": 0,
-            "total_scans": 0,
-            "scans_7d": 0,
-            "scans_30d": 0,
-            "last_scanned_at": None,
+            "total_scans": hist_total,
+            "scans_7d": hist_7d,
+            "scans_30d": hist_30d,
+            "last_scanned_at": hist_last,
             "never_scanned_count": 0,
             "not_scanned_30d_count": 0,
             "items": [],
@@ -307,32 +482,8 @@ def get_client_details(
     
     qrs = db.query(QRCode).filter(QRCode.id.in_(qr_ids)).all()
     
-    # Pre-calculate scans per QR code
-    scan_rows = (
-        db.query(
-            QRScanEvent.qr_code_id,
-            func.count(QRScanEvent.id).label("total_scans"),
-            func.max(QRScanEvent.scanned_at).label("last_scanned_at"),
-            func.sum(case((QRScanEvent.scanned_at >= seven_days_ago, 1), else_=0)).label("scans_7d"),
-            func.sum(case((QRScanEvent.scanned_at >= thirty_days_ago, 1), else_=0)).label("scans_30d"),
-        )
-        .filter(
-            QRScanEvent.qr_code_id.in_(qr_ids),
-            QRScanEvent.result_type == "redirect",
-        )
-        .group_by(QRScanEvent.qr_code_id)
-        .all()
-    )
-    
-    scan_map = {
-        row.qr_code_id: {
-            "total_scans": row.total_scans or 0,
-            "last_scanned_at": row.last_scanned_at,
-            "scans_7d": int(row.scans_7d or 0),
-            "scans_30d": int(row.scans_30d or 0),
-        }
-        for row in scan_rows
-    }
+    # Use historical scan attribution instead of raw scan counts on current QR IDs
+    hist_scan_stats = _get_historical_scan_stats_per_qr(db, client_name, qr_code_ids=qr_ids)
     
     items = []
     client_total_scans = 0
@@ -343,7 +494,7 @@ def get_client_details(
     not_scanned_30d_count = 0
     
     for qr in qrs:
-        s = scan_map.get(qr.id, {
+        s = hist_scan_stats.get(qr.id, {
             "total_scans": 0,
             "last_scanned_at": None,
             "scans_7d": 0,
@@ -389,6 +540,22 @@ def get_client_details(
             "is_never_scanned": is_never,
             "is_not_used_30d": is_not_30d,
         })
+    
+    # Also count historical scans from QR codes no longer owned by this client
+    # (e.g., scans that happened before the QR was transferred away)
+    all_hist_scans = _get_historical_scan_attribution(db, client_name)
+    total_hist_scans = len(all_hist_scans)
+    hist_last = max((s.scanned_at for s in all_hist_scans), default=None)
+    hist_7d = sum(1 for s in all_hist_scans if s.scanned_at >= seven_days_ago)
+    hist_30d = sum(1 for s in all_hist_scans if s.scanned_at >= thirty_days_ago)
+    
+    # Use total historical attribution for the client-level stats
+    client_total_scans = total_hist_scans
+    client_scans_7d = hist_7d
+    client_scans_30d = hist_30d
+    if hist_last:
+        if not client_last_scanned_at or hist_last > client_last_scanned_at:
+            client_last_scanned_at = hist_last
     
     total_qrs = len(qrs)
     active_cnt = sum(1 for q in qrs if q.status == QRStatus.ACTIVE)
@@ -711,7 +878,14 @@ def get_client_analytics(
     days: int = 30,
 ) -> Dict[str, Any]:
     """
-    Generate client-level scan usage analytics:
+    Generate client-level scan usage analytics using historical attribution.
+
+    All scan counts use the historical attribution rule: a scan is attributed
+    to the client whose assignment was active when the scan occurred.
+    A QR transferred between clients does NOT transfer its historical scan
+    analytics to the new owner.
+
+    Metrics:
     - Daily scan activity
     - Weekly scan activity
     - Monthly scan activity
@@ -721,11 +895,16 @@ def get_client_analytics(
     - QR codes with declining usage (last 14d vs prior 14d)
     """
     days = max(7, min(days, 365))
-    qr_ids = _get_client_qr_ids(db, client_name)
     now = datetime.utcnow()
     start_date = now - timedelta(days=days)
-    
-    if not qr_ids:
+
+    # Get ALL historically attributed redirect scans for this client
+    all_attributed_scans = _get_historical_scan_attribution(db, client_name)
+
+    # Current QR inventory for this client (for QR-level enrichment)
+    qr_ids = _get_client_qr_ids(db, client_name)
+
+    if not all_attributed_scans and not qr_ids:
         return {
             "client_name": client_name,
             "date_range_days": days,
@@ -737,25 +916,14 @@ def get_client_analytics(
             "no_scan_qrs": [],
             "declining_qrs": [],
         }
-    
-    # 1. Daily scan activity
-    daily_rows = (
-        db.query(
-            func.strftime("%Y-%m-%d", QRScanEvent.scanned_at).label("day"),
-            func.count(QRScanEvent.id).label("scans"),
-        )
-        .filter(
-            QRScanEvent.qr_code_id.in_(qr_ids),
-            QRScanEvent.result_type == "redirect",
-            QRScanEvent.scanned_at >= start_date,
-        )
-        .group_by("day")
-        .order_by("day")
-        .all()
-    )
-    daily_map = {r.day: r.scans for r in daily_rows}
-    
-    # Generate complete sequence for days
+
+    # 1. Daily scan activity (from historically attributed scans only)
+    daily_map: Dict[str, int] = {}
+    for scan in all_attributed_scans:
+        if scan.scanned_at >= start_date:
+            day_key = scan.scanned_at.strftime("%Y-%m-%d")
+            daily_map[day_key] = daily_map.get(day_key, 0) + 1
+
     daily_scans = []
     for d in range(days):
         dt = (now - timedelta(days=days - 1 - d)).strftime("%Y-%m-%d")
@@ -763,78 +931,55 @@ def get_client_analytics(
             "date": dt,
             "scans": daily_map.get(dt, 0),
         })
-    
+
     # 2. Weekly scan activity
-    weekly_rows = (
-        db.query(
-            func.strftime("%Y-W%W", QRScanEvent.scanned_at).label("week"),
-            func.count(QRScanEvent.id).label("scans"),
-        )
-        .filter(
-            QRScanEvent.qr_code_id.in_(qr_ids),
-            QRScanEvent.result_type == "redirect",
-            QRScanEvent.scanned_at >= (now - timedelta(days=180)),
-        )
-        .group_by("week")
-        .order_by("week")
-        .all()
+    weekly_map: Dict[str, int] = {}
+    week_cutoff = now - timedelta(days=180)
+    for scan in all_attributed_scans:
+        if scan.scanned_at >= week_cutoff:
+            week_key = scan.scanned_at.strftime("%Y-W%W")
+            weekly_map[week_key] = weekly_map.get(week_key, 0) + 1
+    weekly_scans = sorted(
+        [{"week": k, "scans": v} for k, v in weekly_map.items()],
+        key=lambda x: x["week"],
     )
-    weekly_scans = [{"week": r.week, "scans": r.scans} for r in weekly_rows]
-    
+
     # 3. Monthly scan activity
-    monthly_rows = (
-        db.query(
-            func.strftime("%Y-%m", QRScanEvent.scanned_at).label("month"),
-            func.count(QRScanEvent.id).label("scans"),
-        )
-        .filter(
-            QRScanEvent.qr_code_id.in_(qr_ids),
-            QRScanEvent.result_type == "redirect",
-            QRScanEvent.scanned_at >= (now - timedelta(days=365)),
-        )
-        .group_by("month")
-        .order_by("month")
-        .all()
+    monthly_map: Dict[str, int] = {}
+    month_cutoff = now - timedelta(days=365)
+    for scan in all_attributed_scans:
+        if scan.scanned_at >= month_cutoff:
+            month_key = scan.scanned_at.strftime("%Y-%m")
+            monthly_map[month_key] = monthly_map.get(month_key, 0) + 1
+    monthly_scans = sorted(
+        [{"month": k, "scans": v} for k, v in monthly_map.items()],
+        key=lambda x: x["month"],
     )
-    monthly_scans = [{"month": r.month, "scans": r.scans} for r in monthly_rows]
-    
-    # 4. QR-level metrics for ranking
-    all_client_qrs = db.query(QRCode).filter(QRCode.id.in_(qr_ids)).all()
-    
-    qr_scans_summary = (
-        db.query(
-            QRScanEvent.qr_code_id,
-            func.count(QRScanEvent.id).label("total_scans"),
-            func.sum(case((QRScanEvent.scanned_at >= (now - timedelta(days=14)), 1), else_=0)).label("last_14d"),
-            func.sum(case((and_(
-                QRScanEvent.scanned_at >= (now - timedelta(days=28)),
-                QRScanEvent.scanned_at < (now - timedelta(days=14)),
-            ), 1), else_=0)).label("prior_14d"),
-        )
-        .filter(
-            QRScanEvent.qr_code_id.in_(qr_ids),
-            QRScanEvent.result_type == "redirect",
-        )
-        .group_by(QRScanEvent.qr_code_id)
-        .all()
-    )
-    
-    summary_map = {
-        r.qr_code_id: {
-            "total_scans": r.total_scans or 0,
-            "last_14d": int(r.last_14d or 0),
-            "prior_14d": int(r.prior_14d or 0),
-        }
-        for r in qr_scans_summary
-    }
-    
+
+    # 4. QR-level metrics for ranking (using historical attribution)
+    all_client_qrs = db.query(QRCode).filter(QRCode.id.in_(qr_ids)).all() if qr_ids else []
+
+    # Build per-QR stats from attributed scans
+    qr_stats: Dict[int, Dict[str, int]] = {}
+    fourteen_days_ago = now - timedelta(days=14)
+    twentyeight_days_ago = now - timedelta(days=28)
+    for scan in all_attributed_scans:
+        qid = scan.qr_code_id
+        if qid not in qr_stats:
+            qr_stats[qid] = {"total_scans": 0, "last_14d": 0, "prior_14d": 0}
+        qr_stats[qid]["total_scans"] += 1
+        if scan.scanned_at >= fourteen_days_ago:
+            qr_stats[qid]["last_14d"] += 1
+        elif scan.scanned_at >= twentyeight_days_ago:
+            qr_stats[qid]["prior_14d"] += 1
+
     enriched_qrs = []
     for qr in all_client_qrs:
-        s = summary_map.get(qr.id, {"total_scans": 0, "last_14d": 0, "prior_14d": 0})
+        s = qr_stats.get(qr.id, {"total_scans": 0, "last_14d": 0, "prior_14d": 0})
         dest = qr.current_destination
         if not dest and qr.assignments:
             dest = qr.assignments[0].destination_url
-        
+
         enriched_qrs.append({
             "qr_id": qr.qr_id,
             "status": qr.status.value,
@@ -843,22 +988,22 @@ def get_client_analytics(
             "last_14d": s["last_14d"],
             "prior_14d": s["prior_14d"],
         })
-    
+
     # Most used
     most_used = sorted(
         [q for q in enriched_qrs if q["total_scans"] > 0],
         key=lambda x: -x["total_scans"],
     )[:5]
-    
+
     # Least used (> 0 scans)
     least_used = sorted(
         [q for q in enriched_qrs if q["total_scans"] > 0],
         key=lambda x: x["total_scans"],
     )[:5]
-    
+
     # No scan QRs
     no_scans = [q for q in enriched_qrs if q["total_scans"] == 0]
-    
+
     # Declining QRs (prior 14d had at least 4 scans, and recent 14d is down by 50% or more)
     declining = []
     for q in enriched_qrs:
@@ -875,7 +1020,7 @@ def get_client_analytics(
                 "drop_percentage": pct_drop,
             })
     declining.sort(key=lambda x: -x["drop_percentage"])
-    
+
     return {
         "client_name": client_name,
         "date_range_days": days,

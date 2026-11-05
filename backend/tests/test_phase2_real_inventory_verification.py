@@ -148,6 +148,7 @@ def test_public_scan_tracking_vs_camera_preview_and_latency(monkeypatch):
     from app.config import get_settings
     monkeypatch.setenv("TRUSTED_PROXIES", "testclient,127.0.0.1")
     get_settings.cache_clear()
+    get_settings()  # Prime settings cache outside of timed redirect block
 
     db = TestingSessionLocal()
     q1 = db.query(QRCode).filter(QRCode.qr_id == "QR-ALP01").first()

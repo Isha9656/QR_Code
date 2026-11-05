@@ -17,14 +17,19 @@ def get_overview(db: Session) -> dict:
     disabled = db.query(func.count(QRCode.id)).filter(QRCode.status == QRStatus.DISABLED).scalar() or 0
     retired = db.query(func.count(QRCode.id)).filter(QRCode.status == QRStatus.RETIRED).scalar() or 0
     
-    total_scans = db.query(func.count(QRScanEvent.id)).scalar() or 0
+    # Genuine public redirects (excluding unassigned/invalid/disabled attempts)
+    redirect_filter = (QRScanEvent.result_type == "redirect")
+    total_scans = db.query(func.count(QRScanEvent.id)).filter(redirect_filter).scalar() or 0
     scans_today = db.query(func.count(QRScanEvent.id)).filter(
+        redirect_filter,
         QRScanEvent.scanned_at >= today_start
     ).scalar() or 0
     scans_week = db.query(func.count(QRScanEvent.id)).filter(
+        redirect_filter,
         QRScanEvent.scanned_at >= week_start
     ).scalar() or 0
     scans_month = db.query(func.count(QRScanEvent.id)).filter(
+        redirect_filter,
         QRScanEvent.scanned_at >= month_start
     ).scalar() or 0
     

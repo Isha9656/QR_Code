@@ -82,6 +82,7 @@ export const adminAPI = {
   downloadBackup: (filename) =>
     api.get(`/api/admin/backups/${filename}/download`, { responseType: 'blob' }),
   getAuditLogs: (params) => api.get('/api/admin/audit-logs', { params }),
+  cleanupTestData: () => api.post('/api/admin/inventory/cleanup-test-data'),
 };
 
 // Client-Wise QR Usage & Activation Management
@@ -110,6 +111,11 @@ export const clientAPI = {
     api.post(`/api/clients/${encodeURIComponent(clientName)}/activate-all`),
   deactivateAll: (clientName) =>
     api.post(`/api/clients/${encodeURIComponent(clientName)}/deactivate-all`),
+};
+
+// Global Search
+export const searchAPI = {
+  global: (query) => api.get('/api/search/global', { params: { q: query } }),
 };
 
 export default api;
