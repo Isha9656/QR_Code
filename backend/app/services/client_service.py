@@ -102,32 +102,79 @@ def _attribute_scan_to_client(
     Determine which client a scan should be attributed to based on
     which assignment was active at the time of the scan.
 
-    Business rule: A scan is attributed to the client whose assignment
-    was active when the scan occurred. If a QR code has been transferred,
-    historical scans remain with the original client.
-
-    Returns the business_name of the owning client, or None if no
-    assignment was active at scan time.
+    Business rules:
+    - A scan is attributed to the client whose assignment was active when the scan occurred.
+    - If a QR code has been transferred, historical scans remain with the original client.
+    - An assignment is active from its assigned_at up to its deactivated_at (or indefinitely if active).
+    - If a subsequent assignment exists starting at T_next, the prior assignment ends at T_next.
+      A scan occurring exactly at T_next belongs to the new assignment.
+    - If a scan occurs exactly at deactivated_at and no subsequent assignment exists, it belongs
+      to that assignment (since it was active up to deactivation).
+    - If multiple different clients have overlapping assignments active at scanned_at, history
+      is ambiguous: return None (unattributed) rather than silently misattributing.
+    - If no assignment was active at scanned_at (e.g. scan before initial assignment or after deactivation),
+      return None (unattributed).
+    - Scans are never double-counted.
     """
-    # Find the assignment that was active when this scan occurred.
-    # An assignment was active at scan time if:
-    #   assigned_at <= scanned_at AND (deactivated_at IS NULL OR deactivated_at > scanned_at)
-    # If multiple match (shouldn't happen), use the most recently assigned.
-    assignment = (
+    candidate_assignments = (
         db.query(QRAssignment)
         .filter(
             QRAssignment.qr_code_id == scan.qr_code_id,
             QRAssignment.assigned_at <= scan.scanned_at,
-            or_(
-                QRAssignment.deactivated_at.is_(None),
-                QRAssignment.deactivated_at > scan.scanned_at,
-            ),
         )
-        .order_by(QRAssignment.assigned_at.desc())
-        .first()
+        .order_by(QRAssignment.assigned_at.asc())
+        .all()
     )
-    if assignment:
-        return assignment.business_name.strip()
+
+    if not candidate_assignments:
+        return None
+
+    active_matches = []
+    for assign in candidate_assignments:
+        # Determine if a subsequent assignment for this QR code superseded this one
+        next_assign = (
+            db.query(QRAssignment)
+            .filter(
+                QRAssignment.qr_code_id == scan.qr_code_id,
+                QRAssignment.assigned_at > assign.assigned_at,
+            )
+            .order_by(QRAssignment.assigned_at.asc())
+            .first()
+        )
+
+        if next_assign and next_assign.assigned_at <= scan.scanned_at:
+            # Superseded before or at scanned_at by the next assignment
+            continue
+
+        # Check deactivated_at boundary
+        if assign.deactivated_at is not None:
+            if next_assign:
+                # Next assignment takes over at next_assign.assigned_at
+                if scan.scanned_at >= next_assign.assigned_at:
+                    continue
+            else:
+                # No next assignment: valid up to and including deactivated_at
+                if scan.scanned_at > assign.deactivated_at:
+                    continue
+
+        active_matches.append(assign)
+
+    if not active_matches:
+        return None
+
+    # Check for ambiguity: if multiple assignments from DIFFERENT clients match, it is ambiguous
+    distinct_clients = {
+        a.business_name.strip()
+        for a in active_matches
+        if a.business_name and a.business_name.strip()
+    }
+
+    if len(distinct_clients) == 1:
+        return next(iter(distinct_clients))
+    elif len(distinct_clients) > 1:
+        # Ambiguous overlapping history: return None to avoid silent misattribution
+        return None
+
     return None
 
 

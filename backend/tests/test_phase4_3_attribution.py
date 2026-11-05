@@ -478,6 +478,259 @@ class TestMissingAssignmentSafety:
 
 
 # =====================================================================
+# TEST: Historical attribution edge cases (Phase 4.4 requirements)
+# =====================================================================
+
+class TestHistoricalAttributionEdgeCases:
+    """
+    Exhaustive boundary and edge-case testing:
+    - Scan before assignment
+    - Scan during assignment
+    - Scan exactly at deactivation time
+    - Scan exactly at next assignment time
+    - QR transferred between two clients
+    - Missing assignment history
+    - Overlapping assignment intervals (ambiguous history reported as unattributed)
+    - Multiple assignments for the same QR
+    """
+
+    def test_scan_before_assignment_returns_none(self):
+        db = get_db_session()
+        qr = QRCode(qr_id="QR-EDGE-1", token="tok_edge_1", status=QRStatus.ACTIVE)
+        db.add(qr)
+        db.commit()
+        # Assignment begins at 2026-06-01 12:00:00
+        a = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Edge Client Alpha",
+            destination_url="https://alpha.example.com",
+            assigned_by=1,
+            assigned_at=datetime(2026, 6, 1, 12, 0, 0),
+        )
+        # Scan occurred earlier at 2026-06-01 11:59:59
+        scan = QRScanEvent(
+            qr_code_id=qr.id,
+            scanned_at=datetime(2026, 6, 1, 11, 59, 59),
+            result_type="redirect",
+        )
+        db.add_all([a, scan])
+        db.commit()
+
+        owner = _attribute_scan_to_client(db, scan)
+        assert owner is None, f"Scan before assignment must be unattributed, got {owner}"
+
+        # Must not be attributed to Edge Client Alpha
+        alpha_scans = _get_historical_scan_attribution(db, "Edge Client Alpha", qr_code_ids=[qr.id])
+        assert len(alpha_scans) == 0
+
+        db.delete(scan); db.delete(a); db.delete(qr); db.commit(); db.close()
+
+    def test_scan_during_assignment_attributes_correctly(self):
+        db = get_db_session()
+        qr = QRCode(qr_id="QR-EDGE-2", token="tok_edge_2", status=QRStatus.ACTIVE)
+        db.add(qr)
+        db.commit()
+        a = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Edge Client Beta",
+            destination_url="https://beta.example.com",
+            assigned_by=1,
+            assigned_at=datetime(2026, 6, 1, 10, 0, 0),
+            deactivated_at=datetime(2026, 6, 1, 18, 0, 0),
+        )
+        scan = QRScanEvent(
+            qr_code_id=qr.id,
+            scanned_at=datetime(2026, 6, 1, 14, 0, 0),
+            result_type="redirect",
+        )
+        db.add_all([a, scan])
+        db.commit()
+
+        owner = _attribute_scan_to_client(db, scan)
+        assert owner == "Edge Client Beta"
+
+        db.delete(scan); db.delete(a); db.delete(qr); db.commit(); db.close()
+
+    def test_scan_exactly_at_deactivation_time_without_next_assignment(self):
+        """A scan occurring at the exact deactivation timestamp belongs to that client."""
+        db = get_db_session()
+        t_deact = datetime(2026, 6, 1, 15, 30, 0)
+        qr = QRCode(qr_id="QR-EDGE-3", token="tok_edge_3", status=QRStatus.DISABLED)
+        db.add(qr)
+        db.commit()
+        a = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Edge Client Gamma",
+            destination_url="https://gamma.example.com",
+            assigned_by=1,
+            assigned_at=datetime(2026, 6, 1, 10, 0, 0),
+            deactivated_at=t_deact,
+        )
+        scan_at_deact = QRScanEvent(
+            qr_code_id=qr.id,
+            scanned_at=t_deact,
+            result_type="redirect",
+        )
+        scan_after_deact = QRScanEvent(
+            qr_code_id=qr.id,
+            scanned_at=datetime(2026, 6, 1, 15, 30, 1),
+            result_type="redirect",
+        )
+        db.add_all([a, scan_at_deact, scan_after_deact])
+        db.commit()
+
+        owner_at = _attribute_scan_to_client(db, scan_at_deact)
+        assert owner_at == "Edge Client Gamma", f"Scan at deactivation time should attribute to Gamma, got {owner_at}"
+
+        owner_after = _attribute_scan_to_client(db, scan_after_deact)
+        assert owner_after is None, f"Scan after deactivation must be unattributed, got {owner_after}"
+
+        db.delete(scan_at_deact); db.delete(scan_after_deact); db.delete(a); db.delete(qr); db.commit(); db.close()
+
+    def test_scan_exactly_at_next_assignment_time_transfers_cleanly(self):
+        """When QR is transferred at T_transfer, a scan at T_transfer belongs to the new client."""
+        db = get_db_session()
+        t_transfer = datetime(2026, 6, 1, 12, 0, 0)
+        qr = QRCode(qr_id="QR-EDGE-4", token="tok_edge_4", status=QRStatus.ACTIVE)
+        db.add(qr)
+        db.commit()
+
+        a1 = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Old Owner",
+            destination_url="https://old.example.com",
+            assigned_by=1,
+            is_active=False,
+            assigned_at=datetime(2026, 6, 1, 8, 0, 0),
+            deactivated_at=t_transfer,
+        )
+        a2 = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="New Owner",
+            destination_url="https://new.example.com",
+            assigned_by=1,
+            is_active=True,
+            assigned_at=t_transfer,
+        )
+        # Scan at exact moment of transfer
+        scan_exact = QRScanEvent(
+            qr_code_id=qr.id,
+            scanned_at=t_transfer,
+            result_type="redirect",
+        )
+        # Scan 1 second before transfer
+        scan_before = QRScanEvent(
+            qr_code_id=qr.id,
+            scanned_at=datetime(2026, 6, 1, 11, 59, 59),
+            result_type="redirect",
+        )
+        db.add_all([a1, a2, scan_exact, scan_before])
+        db.commit()
+
+        assert _attribute_scan_to_client(db, scan_before) == "Old Owner"
+        assert _attribute_scan_to_client(db, scan_exact) == "New Owner"
+
+        db.delete(scan_exact); db.delete(scan_before); db.delete(a2); db.delete(a1); db.delete(qr); db.commit(); db.close()
+
+    def test_overlapping_assignments_different_clients_reported_unattributed(self):
+        """Ambiguous/corrupted overlapping assignments between different clients must return None and never double count."""
+        db = get_db_session()
+        qr = QRCode(qr_id="QR-EDGE-5", token="tok_edge_5", status=QRStatus.ACTIVE)
+        db.add(qr)
+        db.commit()
+
+        # Both assignments historical with overlapping date intervals for the same QR
+        a1 = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Client Conflicting A",
+            destination_url="https://conflicta.example.com",
+            assigned_by=1,
+            is_active=False,
+            assigned_at=datetime(2026, 6, 1, 10, 0, 0),
+            deactivated_at=datetime(2026, 6, 1, 20, 0, 0),
+        )
+        a2 = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Client Conflicting B",
+            destination_url="https://conflictb.example.com",
+            assigned_by=1,
+            is_active=False,
+            assigned_at=datetime(2026, 6, 1, 10, 0, 0),
+            deactivated_at=datetime(2026, 6, 1, 20, 0, 0),
+        )
+        scan = QRScanEvent(
+            qr_code_id=qr.id,
+            scanned_at=datetime(2026, 6, 1, 15, 0, 0),
+            result_type="redirect",
+        )
+        db.add_all([a1, a2, scan])
+        db.commit()
+
+        owner = _attribute_scan_to_client(db, scan)
+        assert owner is None, f"Ambiguous overlapping history must return None, got {owner}"
+
+        # Neither client gets credit for this ambiguous scan
+        scans_a = _get_historical_scan_attribution(db, "Client Conflicting A", qr_code_ids=[qr.id])
+        scans_b = _get_historical_scan_attribution(db, "Client Conflicting B", qr_code_ids=[qr.id])
+        assert len(scans_a) == 0
+        assert len(scans_b) == 0
+
+        db.delete(scan); db.delete(a2); db.delete(a1); db.delete(qr); db.commit(); db.close()
+
+    def test_multiple_sequential_transfers_three_clients(self):
+        """A QR transferred across 3 clients: Client 1 -> Client 2 -> Client 3."""
+        db = get_db_session()
+        qr = QRCode(qr_id="QR-EDGE-6", token="tok_edge_6", status=QRStatus.ACTIVE)
+        db.add(qr)
+        db.commit()
+
+        a1 = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Client Triple 1",
+            destination_url="https://c1.example.com",
+            assigned_by=1,
+            is_active=False,
+            assigned_at=datetime(2026, 1, 1),
+            deactivated_at=datetime(2026, 2, 1),
+        )
+        a2 = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Client Triple 2",
+            destination_url="https://c2.example.com",
+            assigned_by=1,
+            is_active=False,
+            assigned_at=datetime(2026, 2, 1),
+            deactivated_at=datetime(2026, 3, 1),
+        )
+        a3 = QRAssignment(
+            qr_code_id=qr.id,
+            business_name="Client Triple 3",
+            destination_url="https://c3.example.com",
+            assigned_by=1,
+            is_active=True,
+            assigned_at=datetime(2026, 3, 1),
+        )
+        s1 = QRScanEvent(qr_code_id=qr.id, scanned_at=datetime(2026, 1, 15), result_type="redirect")
+        s2 = QRScanEvent(qr_code_id=qr.id, scanned_at=datetime(2026, 2, 15), result_type="redirect")
+        s3 = QRScanEvent(qr_code_id=qr.id, scanned_at=datetime(2026, 3, 15), result_type="redirect")
+
+        db.add_all([a1, a2, a3, s1, s2, s3])
+        db.commit()
+
+        assert _attribute_scan_to_client(db, s1) == "Client Triple 1"
+        assert _attribute_scan_to_client(db, s2) == "Client Triple 2"
+        assert _attribute_scan_to_client(db, s3) == "Client Triple 3"
+
+        assert _count_historical_scans(db, "Client Triple 1", qr_code_ids=[qr.id]) == 1
+        assert _count_historical_scans(db, "Client Triple 2", qr_code_ids=[qr.id]) == 1
+        assert _count_historical_scans(db, "Client Triple 3", qr_code_ids=[qr.id]) == 1
+
+        db.delete(s1); db.delete(s2); db.delete(s3)
+        db.delete(a3); db.delete(a2); db.delete(a1); db.delete(qr)
+        db.commit(); db.close()
+
+
+# =====================================================================
 # TEST: API endpoints via HTTP (integration)
 # =====================================================================
 
