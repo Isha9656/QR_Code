@@ -10,14 +10,14 @@ set FOUND=0
 
 :: Stop Backend on port 8000
 for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr :8000 ^| findstr LISTENING') do (
-    echo [+] Stopping Backend process (PID: %%a)...
+    echo [+] Stopping Backend process on PID %%a...
     taskkill /F /PID %%a >nul 2>&1
     set FOUND=1
 )
 
 :: Stop Frontend on port 5173
 for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr :5173 ^| findstr LISTENING') do (
-    echo [+] Stopping Frontend process (PID: %%a)...
+    echo [+] Stopping Frontend process on PID %%a...
     taskkill /F /PID %%a >nul 2>&1
     set FOUND=1
 )
