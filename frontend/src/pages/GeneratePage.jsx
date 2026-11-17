@@ -36,8 +36,14 @@ export default function GeneratePage() {
         errMsg = err.response.data.detail;
       } else if (Array.isArray(err.response?.data?.detail) && err.response.data.detail[0]?.msg) {
         errMsg = err.response.data.detail[0].msg;
-      } else if (err.message === 'Network Error') {
+      } else if (err.response?.status === 502 || err.response?.status === 504) {
+        errMsg = 'Backend server is not responding on port 8000. Please ensure the backend is running.';
+      } else if (err.message === 'Network Error' || err.code === 'ERR_NETWORK') {
         errMsg = 'Cannot connect to backend server. Please verify backend is running on port 8000.';
+      } else if (err.response?.status === 403) {
+        errMsg = 'Admin access required to generate QR codes.';
+      } else if (err.response?.status === 401) {
+        errMsg = 'Session expired. Please log in again as an administrator.';
       } else if (err.message) {
         errMsg = err.message;
       }

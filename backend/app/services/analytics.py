@@ -253,3 +253,91 @@ def get_global_scan_analytics(db: Session, days: int = 30) -> Dict[str, Any]:
         "total_scans_in_period": len(scans),
         "timezone": "Asia/Kolkata",
     }
+
+
+def get_single_qr_analytics(db: Session, qr: QRCode, days: int = 30) -> Dict[str, Any]:
+    """Get comprehensive scan metrics and daily timeline for a single QR code in Asia/Kolkata time."""
+    from app.services.client_service import _attribute_scan_to_client
+
+    # All redirect scans for this QR
+    all_redirect_scans = (
+        db.query(QRScanEvent)
+        .filter(QRScanEvent.qr_code_id == qr.id, QRScanEvent.result_type == "redirect")
+        .order_by(QRScanEvent.scanned_at.asc())
+        .all()
+    )
+
+    total_scans = len(all_redirect_scans)
+
+    today_start_utc, today_end_utc = get_ist_today_bounds_in_utc()
+    yesterday_start_utc, yesterday_end_utc = get_ist_yesterday_bounds_in_utc()
+    now_utc = datetime.utcnow()
+    seven_days_ago = now_utc - timedelta(days=7)
+    thirty_days_ago = now_utc - timedelta(days=30)
+
+    scans_today = sum(1 for s in all_redirect_scans if today_start_utc <= s.scanned_at <= today_end_utc)
+    scans_yesterday = sum(1 for s in all_redirect_scans if yesterday_start_utc <= s.scanned_at <= yesterday_end_utc)
+    scans_7d = sum(1 for s in all_redirect_scans if s.scanned_at >= seven_days_ago)
+    scans_30d = sum(1 for s in all_redirect_scans if s.scanned_at >= thirty_days_ago)
+
+    last_scan = all_redirect_scans[-1].scanned_at if all_redirect_scans else None
+
+    # 30-day daily breakdown
+    today_ist = ist_now().date()
+    start_date_ist = today_ist - timedelta(days=days - 1)
+    start_utc, _ = get_ist_day_bounds_in_utc(start_date_ist)
+
+    daily_map: Dict[str, int] = {}
+    for scan in all_redirect_scans:
+        if scan.scanned_at >= start_utc:
+            d_str = to_ist_date_str(scan.scanned_at)
+            daily_map[d_str] = daily_map.get(d_str, 0) + 1
+
+    daily_trend = []
+    for d in range(days):
+        current_d = start_date_ist + timedelta(days=d)
+        d_str = current_d.strftime("%Y-%m-%d")
+        daily_trend.append({
+            "date": d_str,
+            "scans": daily_map.get(d_str, 0),
+        })
+
+    # Recent scan events (all result types, up to 15 latest)
+    recent_events = (
+        db.query(QRScanEvent)
+        .filter(QRScanEvent.qr_code_id == qr.id)
+        .order_by(QRScanEvent.scanned_at.desc())
+        .limit(15)
+        .all()
+    )
+
+    recent_scans = []
+    for ev in recent_events:
+        attributed_client = _attribute_scan_to_client(db, ev) if ev.result_type == "redirect" else None
+        recent_scans.append({
+            "id": ev.id,
+            "scanned_at": ev.scanned_at,
+            "scanned_at_ist": to_ist_str(ev.scanned_at),
+            "result_type": ev.result_type,
+            "attributed_client": attributed_client,
+            "ip_address": ev.ip_address,
+            "user_agent": ev.user_agent,
+        })
+
+    return {
+        "qr_id": qr.qr_id,
+        "token": qr.token,
+        "status": qr.status.value,
+        "current_business_name": qr.current_business_name,
+        "current_destination": qr.current_destination,
+        "total_scans": total_scans,
+        "scans_today": scans_today,
+        "scans_yesterday": scans_yesterday,
+        "scans_7d": scans_7d,
+        "scans_30d": scans_30d,
+        "last_scanned_at": last_scan,
+        "last_scanned_at_ist": to_ist_str(last_scan) if last_scan else None,
+        "daily_trend": daily_trend,
+        "recent_scans": recent_scans,
+        "timezone": "Asia/Kolkata",
+    }

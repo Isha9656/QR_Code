@@ -87,7 +87,10 @@ async def get_current_user(
             detail="Invalid token payload",
         )
     
-    user = db.query(User).filter(User.id == int(user_id), User.is_active == True).first()
+    if str(user_id).isdigit():
+        user = db.query(User).filter(User.id == int(user_id), User.is_active == True).first()
+    else:
+        user = db.query(User).filter(User.username == str(user_id), User.is_active == True).first()
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

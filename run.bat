@@ -45,7 +45,7 @@ for /f "tokens=*" %%v in ('"%PYTHON_EXE%" --version 2^>^&1') do echo [+] Found %
 
 :: 2. Check Node / npm (MUST use call npm to avoid exiting batch script)
 node --version >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [ERROR] Node.js is not found in PATH!
     echo Please install Node.js v18 or higher from https://nodejs.org/ and add to PATH.
     echo.
@@ -55,7 +55,7 @@ if %errorlevel% neq 0 (
 for /f "tokens=*" %%v in ('node --version 2^>^&1') do echo [+] Found Node %%v
 
 call npm --version >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [ERROR] npm is not found in PATH!
     echo Please install Node.js v18 or higher from https://nodejs.org/
     echo.
@@ -67,7 +67,7 @@ for /f "tokens=*" %%v in ('call npm --version 2^>^&1') do echo [+] Found npm v%%
 :: 3. Verify / install backend dependencies
 echo [+] Checking backend dependencies...
 "%PYTHON_EXE%" -c "import fastapi, uvicorn, slowapi, sqlalchemy, qrcode, pydantic_settings, jose, passlib" >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [!] Backend dependencies missing or incomplete.
     echo [+] Installing dependencies from backend\requirements.txt...
     "%PYTHON_EXE%" -m pip install -r "%ROOT_DIR%\backend\requirements.txt"
@@ -119,10 +119,10 @@ echo =======================================================
 echo.
 
 :: 6. Launch Backend in separate window using dedicated script
-start "QR Backend (FastAPI)" /d "%ROOT_DIR%\backend" cmd /k "start_backend.bat"
+start "QR Backend (FastAPI)" /d "%ROOT_DIR%\backend" cmd /k "call start_backend.bat"
 
 :: 7. Launch Frontend in separate window using dedicated script
-start "QR Frontend (Vite)" /d "%ROOT_DIR%\frontend" cmd /k "start_frontend.bat"
+start "QR Frontend (Vite)" /d "%ROOT_DIR%\frontend" cmd /k "call start_frontend.bat"
 
 :: 8. Wait briefly and open browser
 echo [+] Waiting for services to initialize...

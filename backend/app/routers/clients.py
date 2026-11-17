@@ -27,6 +27,8 @@ async def list_clients(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     search: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, description="all, has_active, has_disabled, has_retired"),
+    activity_filter: Optional[str] = Query(None, description="all, has_scans, never_scanned"),
     sort_by: str = Query("client_name", pattern="^(client_name|total_qr_codes|active_qr_codes|total_scans|last_scanned_at)$"),
     sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
     current_user: User = Depends(get_current_user),
@@ -35,7 +37,8 @@ async def list_clients(
     """List all clients with their QR inventory and scan usage metrics."""
     return client_service.get_clients_list(
         db, page=page, per_page=per_page,
-        search=search, sort_by=sort_by, sort_dir=sort_dir,
+        search=search, status_filter=status_filter, activity_filter=activity_filter,
+        sort_by=sort_by, sort_dir=sort_dir,
     )
 
 

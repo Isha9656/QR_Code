@@ -357,10 +357,13 @@ def get_clients_list(
     page: int = 1,
     per_page: int = 20,
     search: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    activity_filter: Optional[str] = None,
     sort_by: str = "client_name",
     sort_dir: str = "asc",
 ) -> Dict[str, Any]:
     """Get paginated, searchable, sortable list of all clients with usage and lifecycle metrics."""
+    from app.core.timezone import to_ist_str
     client_names = get_distinct_client_names(db)
     
     if search:
@@ -407,6 +410,22 @@ def get_clients_list(
         # Skip clients with no current QRs AND no historical scans
         if total_qrs == 0 and total_scans == 0:
             continue
+
+        # Status filter
+        if status_filter and status_filter != "all":
+            if status_filter == "has_active" and active_cnt == 0:
+                continue
+            elif status_filter == "has_disabled" and disabled_cnt == 0:
+                continue
+            elif status_filter == "has_retired" and retired_cnt == 0:
+                continue
+
+        # Activity filter
+        if activity_filter and activity_filter != "all":
+            if activity_filter == "has_scans" and total_scans == 0:
+                continue
+            elif activity_filter == "never_scanned" and total_scans > 0:
+                continue
         
         client_records.append({
             "client_name": client,
@@ -416,6 +435,7 @@ def get_clients_list(
             "retired_qr_codes": retired_cnt,
             "total_scans": total_scans,
             "last_scanned_at": last_scanned_at,
+            "last_scanned_at_ist": to_ist_str(last_scanned_at) if last_scanned_at else "Never",
             "never_scanned_count": never_scanned_cnt,
             "not_scanned_30d_count": not_scanned_30d_cnt,
         })

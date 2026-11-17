@@ -303,3 +303,28 @@ async def get_qr_code(
         raise HTTPException(status_code=404, detail="QR code not found")
     
     return qr_to_response(qr)
+
+
+@router.get("/{qr_id_or_db_id}/analytics")
+async def get_qr_analytics(
+    qr_id_or_db_id: str,
+    days: int = Query(30, ge=7, le=365),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get scan metrics, trends, and recent events for a single QR code in Asia/Kolkata time."""
+    from app.services.analytics import get_single_qr_analytics
+    qr = None
+    if qr_id_or_db_id.startswith("QR-"):
+        qr = db.query(QRCode).filter(QRCode.qr_id == qr_id_or_db_id).first()
+    else:
+        try:
+            db_id = int(qr_id_or_db_id)
+            qr = db.query(QRCode).filter(QRCode.id == db_id).first()
+        except ValueError:
+            pass
+
+    if not qr:
+        raise HTTPException(status_code=404, detail="QR code not found")
+
+    return get_single_qr_analytics(db, qr, days=days)
