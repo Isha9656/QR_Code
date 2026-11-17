@@ -6,7 +6,8 @@ from app.database import get_db
 from app.auth import get_current_user, get_admin_user
 from app.models import User, UserRole, QRCode, QRAssignment, QRStatus, AuditLog
 from app.schemas import (
-    AssignRequest, ReassignRequest, AssignmentResponse, AssignmentHistoryResponse
+    AssignRequest, ReassignRequest, AssignmentResponse, AssignmentHistoryResponse,
+    BulkAssignRequest, BulkAssignResponse
 )
 from app.config import get_settings
 import json
@@ -359,6 +360,89 @@ async def recover_qr(
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Retired QR codes cannot be reactivated. Retirement is a permanent terminal state.",
+    )
+
+
+@router.post("/bulk-assign", response_model=BulkAssignResponse)
+async def bulk_assign_qrs(
+    request: BulkAssignRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Bulk assign multiple unassigned QR codes to a business.
+    Executes changes transactionally and preserves assignment history.
+    """
+    settings = get_settings()
+    if current_user.role == UserRole.OPERATOR and not settings.OPERATOR_CAN_ASSIGN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operator assignment is currently disabled by system policy.",
+        )
+    
+    successful_qrs = []
+    failed_ids = []
+    now = datetime.utcnow()
+
+    # Pre-resolve and validate all
+    resolved_qrs = []
+    for qr_id_str in request.qr_ids:
+        try:
+            qr = _resolve_qr(qr_id_str, db)
+            if qr.status != QRStatus.UNASSIGNED:
+                failed_ids.append(f"{qr.qr_id} (not unassigned: {qr.status.value})")
+            else:
+                resolved_qrs.append(qr)
+        except Exception:
+            failed_ids.append(f"{qr_id_str} (not found)")
+
+    if not resolved_qrs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No assignable QR codes found. Issues: {', '.join(failed_ids)}",
+        )
+
+    for qr in resolved_qrs:
+        qr.status = QRStatus.ACTIVE
+        qr.current_destination = request.destination_url
+        qr.current_business_name = request.business_name.strip()
+        qr.updated_at = now
+
+        assign = QRAssignment(
+            qr_code_id=qr.id,
+            business_name=request.business_name.strip(),
+            destination_url=request.destination_url,
+            notes=request.notes,
+            is_active=True,
+            assigned_by=current_user.id,
+            assigned_at=now,
+            expiry_date=request.expiry_date,
+        )
+        db.add(assign)
+        successful_qrs.append(qr.qr_id)
+
+    audit = AuditLog(
+        user_id=current_user.id,
+        action="bulk_assign",
+        entity_type="qr_code",
+        status="success",
+        details=json.dumps({
+            "business_name": request.business_name.strip(),
+            "destination_url": request.destination_url,
+            "assigned_count": len(successful_qrs),
+            "assigned_ids": successful_qrs,
+            "failed_ids": failed_ids,
+        }),
+    )
+    db.add(audit)
+    db.commit()
+
+    return BulkAssignResponse(
+        success=True,
+        assigned_count=len(successful_qrs),
+        assigned_ids=successful_qrs,
+        failed_ids=failed_ids,
+        message=f"Successfully assigned {len(successful_qrs)} QR codes to {request.business_name.strip()}.",
     )
 
 

@@ -209,6 +209,10 @@ export default function Header({ onToggleMobileMenu, sidebarCollapsed, onToggleS
 
       {/* User Information & Logout */}
       <div className="header-right">
+        <div className="timezone-badge" title="System Standard Time: Asia/Kolkata (UTC+05:30)">
+          <span className="tz-flag">🇮🇳</span>
+          <span className="tz-label">IST (UTC+05:30)</span>
+        </div>
         <div className="user-profile-badge">
           <span className="user-role-tag">{user?.role?.toUpperCase()}</span>
           <span className="user-display-name">{user?.display_name || user?.username}</span>

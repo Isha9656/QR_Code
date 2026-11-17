@@ -31,7 +31,17 @@ export default function GeneratePage() {
       setResult(res.data);
       setToast({ type: 'success', message: `${res.data.length} QR codes generated!` });
     } catch (err) {
-      setToast({ type: 'error', message: err.response?.data?.detail || 'Generation failed' });
+      let errMsg = 'Generation failed';
+      if (typeof err.response?.data?.detail === 'string') {
+        errMsg = err.response.data.detail;
+      } else if (Array.isArray(err.response?.data?.detail) && err.response.data.detail[0]?.msg) {
+        errMsg = err.response.data.detail[0].msg;
+      } else if (err.message === 'Network Error') {
+        errMsg = 'Cannot connect to backend server. Please verify backend is running on port 8000.';
+      } else if (err.message) {
+        errMsg = err.message;
+      }
+      setToast({ type: 'error', message: errMsg });
     } finally {
       setGenerating(false);
     }

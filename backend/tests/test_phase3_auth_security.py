@@ -147,3 +147,39 @@ def test_invalid_and_expired_jwt():
     expired_token = jwt.encode(expired_payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     res2 = client.get("/api/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
     assert res2.status_code == 401
+
+
+def test_query_param_token_authentication_fallback():
+    """Verify that endpoints requiring authentication support token passed via ?token= query parameter."""
+    login_resp = client.post("/api/auth/login", json={"username": "normal_admin", "password": "AdminSecure#2026"})
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+
+    # Request without header but with query parameter ?token=
+    resp_with_param = client.get(f"/api/auth/me?token={token}")
+    assert resp_with_param.status_code == 200
+    assert resp_with_param.json()["username"] == "normal_admin"
+
+    # Invalid query param token must return 401
+    resp_invalid_param = client.get("/api/auth/me?token=invalid.jwt.token")
+    assert resp_invalid_param.status_code == 401
+
+
+def test_cors_origins_settings_parsing():
+    """Verify Settings parses comma-separated CORS_ORIGINS from environment variables."""
+    from app.config import Settings
+    import os
+
+    old_env = os.environ.get("CORS_ORIGINS")
+    try:
+        os.environ["CORS_ORIGINS"] = "http://localhost:5173, https://app.example.com, http://127.0.0.1:3000"
+        s = Settings()
+        assert "http://localhost:5173" in s.CORS_ORIGINS
+        assert "https://app.example.com" in s.CORS_ORIGINS
+        assert "http://127.0.0.1:3000" in s.CORS_ORIGINS
+        assert len(s.CORS_ORIGINS) == 3
+    finally:
+        if old_env is not None:
+            os.environ["CORS_ORIGINS"] = old_env
+        else:
+            os.environ.pop("CORS_ORIGINS", None)

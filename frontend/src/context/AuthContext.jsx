@@ -41,11 +41,13 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const isAdmin = user?.role === 'admin';
+  const userRole = (user?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin' || userRole === 'super_admin';
+  const isSuperAdmin = userRole === 'super_admin';
   const isAuthenticated = !!user;
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, isAdmin, isAuthenticated }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, isAdmin, isSuperAdmin, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   );

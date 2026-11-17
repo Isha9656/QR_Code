@@ -1,6 +1,12 @@
 import os
+from pathlib import Path
+from typing import Union, List
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_DEFAULT_DB_PATH = (_BACKEND_DIR / "qr_system.db").as_posix()
 
 
 class Settings(BaseSettings):
@@ -10,16 +16,30 @@ class Settings(BaseSettings):
     # Base URL for QR codes - change in production
     BASE_URL: str = os.getenv("BASE_URL", "http://localhost:8000")
     
-    # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./qr_system.db")
+    # Database (defaults to backend/qr_system.db regardless of working directory)
+    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{_DEFAULT_DB_PATH}")
     
     # JWT Settings
     SECRET_KEY: str = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production-use-openssl-rand-hex-32")
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
     
-    # CORS
-    CORS_ORIGINS: list = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
+    # CORS (supports list or comma-separated string from .env)
+    CORS_ORIGINS: Union[List[str], str] = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            v_clean = v.strip()
+            if v_clean.startswith("[") and v_clean.endswith("]"):
+                import json
+                try:
+                    return json.loads(v_clean)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v_clean.split(",") if origin.strip()]
+        return v
     
     # Rate Limiting
     RATE_LIMIT_AUTH: str = "5/minute"

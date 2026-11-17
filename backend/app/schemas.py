@@ -55,6 +55,31 @@ class CreateUserRequest(BaseModel):
         return v
 
 
+class UpdateUserRequest(BaseModel):
+    display_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one number")
+        if not any(c in "!@#$%^&*()-_=+[]{}|;:,.<>?/`~" for c in v):
+            raise ValueError("Password must contain at least one special character")
+        return v
+
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -62,6 +87,10 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     must_change_password: bool = False
+    last_login_at: Optional[datetime] = None
+    failed_login_attempts: int = 0
+    locked_until: Optional[datetime] = None
+    mfa_enabled: bool = False
     created_at: datetime
 
     class Config:
@@ -91,6 +120,10 @@ class QRCodeResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     redirect_url: Optional[str] = None
+    created_at_ist: Optional[str] = None
+    updated_at_ist: Optional[str] = None
+    total_scans: Optional[int] = 0
+    last_scanned_at_ist: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -157,6 +190,27 @@ class AssignRequest(BaseModel):
         return _validate_destination_url_security(v)
 
 
+class BulkAssignRequest(BaseModel):
+    qr_ids: List[str] = Field(..., min_length=1)
+    business_name: str = Field(..., min_length=1, max_length=200)
+    destination_url: str = Field(..., min_length=1)
+    notes: Optional[str] = None
+    expiry_date: Optional[datetime] = None
+
+    @field_validator("destination_url")
+    @classmethod
+    def validate_url(cls, v):
+        return _validate_destination_url_security(v)
+
+
+class BulkAssignResponse(BaseModel):
+    success: bool
+    assigned_count: int
+    assigned_ids: List[str]
+    failed_ids: List[str] = []
+    message: str
+
+
 class ReassignRequest(BaseModel):
     business_name: str = Field(..., min_length=1, max_length=200)
     destination_url: str = Field(..., min_length=1)
@@ -213,10 +267,18 @@ class AnalyticsOverview(BaseModel):
     active: int
     disabled: int
     retired: int
+    assigned: Optional[int] = 0
     total_scans: int
     scans_today: int
+    scans_yesterday: Optional[int] = 0
     scans_this_week: int
     scans_this_month: int
+    custom_range_scans: Optional[int] = None
+    never_scanned_count: Optional[int] = 0
+    not_scanned_30d_count: Optional[int] = 0
+    total_businesses: Optional[int] = 0
+    timezone: Optional[str] = "Asia/Kolkata"
+    timezone_offset: Optional[str] = "+05:30"
 
 
 class ScanEventResponse(BaseModel):
@@ -224,7 +286,10 @@ class ScanEventResponse(BaseModel):
     qr_code_id: int
     qr_id: Optional[str] = None
     scanned_at: datetime
+    scanned_at_ist: Optional[str] = None
     result_type: str
+    attributed_client: Optional[str] = None
+    ip_address: Optional[str] = None
 
     class Config:
         from_attributes = True

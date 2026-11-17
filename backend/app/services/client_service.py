@@ -94,6 +94,17 @@ def _get_client_qr_ids(db: Session, client_name: str) -> List[int]:
     return sorted(list(set(direct_qr_ids + hist_qr_ids)))
 
 
+def _get_client_all_historical_qr_ids(db: Session, client_name: str) -> List[int]:
+    """Get internal database IDs of all QR codes ever historically assigned to this client."""
+    cleaned_name = client_name.strip().lower()
+    return sorted(list(set(
+        r[0] for r in db.query(QRAssignment.qr_code_id)
+        .filter(func.trim(func.lower(QRAssignment.business_name)) == cleaned_name)
+        .distinct()
+        .all()
+    )))
+
+
 def _attribute_scan_to_client(
     db: Session,
     scan: QRScanEvent,
@@ -449,9 +460,19 @@ def get_client_details(
 ) -> Dict[str, Any]:
     """Retrieve detailed client inventory, QR codes, scan statistics, and filter options."""
     qr_ids = _get_client_qr_ids(db, client_name)
+    from app.core.timezone import (
+        to_ist_str,
+        get_ist_today_bounds_in_utc,
+        get_ist_week_bounds_in_utc,
+        get_ist_month_bounds_in_utc,
+    )
+
     now = datetime.utcnow()
     seven_days_ago = now - timedelta(days=7)
     thirty_days_ago = now - timedelta(days=30)
+    today_start_utc, today_end_utc = get_ist_today_bounds_in_utc()
+    week_start_utc, week_end_utc = get_ist_week_bounds_in_utc()
+    month_start_utc, month_end_utc = get_ist_month_bounds_in_utc()
     
     if not qr_ids:
         # Client may have no current QRs but still have historical scans.
@@ -461,16 +482,25 @@ def get_client_details(
         hist_last = max((s.scanned_at for s in hist_scans), default=None)
         hist_7d = sum(1 for s in hist_scans if s.scanned_at >= seven_days_ago)
         hist_30d = sum(1 for s in hist_scans if s.scanned_at >= thirty_days_ago)
+        scans_today = sum(1 for s in hist_scans if today_start_utc <= s.scanned_at <= today_end_utc)
+        scans_week = sum(1 for s in hist_scans if week_start_utc <= s.scanned_at <= week_end_utc)
+        scans_month = sum(1 for s in hist_scans if month_start_utc <= s.scanned_at <= month_end_utc)
         return {
             "client_name": client_name,
             "total_qr_codes": 0,
+            "currently_assigned_qrs": 0,
+            "previously_assigned_qrs": 0,
             "active_qr_codes": 0,
             "disabled_qr_codes": 0,
             "retired_qr_codes": 0,
             "total_scans": hist_total,
+            "scans_today": scans_today,
+            "scans_this_week": scans_week,
+            "scans_this_month": scans_month,
             "scans_7d": hist_7d,
             "scans_30d": hist_30d,
             "last_scanned_at": hist_last,
+            "last_scanned_at_ist": to_ist_str(hist_last),
             "never_scanned_count": 0,
             "not_scanned_30d_count": 0,
             "items": [],
@@ -478,6 +508,7 @@ def get_client_details(
             "page": page,
             "per_page": per_page,
             "total_pages": 1,
+            "timezone": "Asia/Kolkata",
         }
     
     qrs = db.query(QRCode).filter(QRCode.id.in_(qr_ids)).all()
@@ -486,12 +517,9 @@ def get_client_details(
     hist_scan_stats = _get_historical_scan_stats_per_qr(db, client_name, qr_code_ids=qr_ids)
     
     items = []
-    client_total_scans = 0
-    client_scans_7d = 0
-    client_scans_30d = 0
-    client_last_scanned_at = None
     never_scanned_count = 0
     not_scanned_30d_count = 0
+    cleaned_name = client_name.strip().lower()
     
     for qr in qrs:
         s = hist_scan_stats.get(qr.id, {
@@ -500,13 +528,6 @@ def get_client_details(
             "scans_7d": 0,
             "scans_30d": 0,
         })
-        
-        client_total_scans += s["total_scans"]
-        client_scans_7d += s["scans_7d"]
-        client_scans_30d += s["scans_30d"]
-        if s["last_scanned_at"]:
-            if not client_last_scanned_at or s["last_scanned_at"] > client_last_scanned_at:
-                client_last_scanned_at = s["last_scanned_at"]
         
         is_never = (s["total_scans"] == 0)
         is_not_30d = (
@@ -519,11 +540,28 @@ def get_client_details(
         if is_not_30d:
             not_scanned_30d_count += 1
         
-        # Destination resolution
-        dest = qr.current_destination
-        if not dest and qr.assignments:
-            dest = qr.assignments[0].destination_url
-        
+        # Check if currently owned by this client
+        is_current_owner = bool(
+            qr.current_business_name and
+            qr.current_business_name.strip().lower() == cleaned_name and
+            qr.status != QRStatus.UNASSIGNED
+        )
+
+        # Retrieve client assignment record
+        client_assign = (
+            db.query(QRAssignment)
+            .filter(
+                QRAssignment.qr_code_id == qr.id,
+                func.trim(func.lower(QRAssignment.business_name)) == cleaned_name,
+            )
+            .order_by(QRAssignment.assigned_at.desc())
+            .first()
+        )
+
+        dest = qr.current_destination if is_current_owner else (client_assign.destination_url if client_assign else qr.current_destination)
+        assigned_at = client_assign.assigned_at if client_assign else qr.created_at
+        deactivated_at = client_assign.deactivated_at if client_assign else None
+
         items.append({
             "id": qr.id,
             "qr_id": qr.qr_id,
@@ -531,36 +569,40 @@ def get_client_details(
             "client_name": client_name,
             "destination_url": dest,
             "status": qr.status.value,
+            "is_current_owner": is_current_owner,
+            "ownership_type": "current" if is_current_owner else "transferred",
+            "assigned_at": assigned_at,
+            "assigned_at_ist": to_ist_str(assigned_at),
+            "deactivated_at": deactivated_at,
+            "deactivated_at_ist": to_ist_str(deactivated_at),
             "total_scans": s["total_scans"],
             "scans_7d": s["scans_7d"],
             "scans_30d": s["scans_30d"],
             "last_scanned_at": s["last_scanned_at"],
+            "last_scanned_at_ist": to_ist_str(s["last_scanned_at"]),
             "created_at": qr.created_at,
+            "created_at_ist": to_ist_str(qr.created_at),
             "last_status_change": qr.updated_at or qr.created_at,
             "is_never_scanned": is_never,
             "is_not_used_30d": is_not_30d,
         })
     
-    # Also count historical scans from QR codes no longer owned by this client
-    # (e.g., scans that happened before the QR was transferred away)
+    # All historical scans attributed to this client
     all_hist_scans = _get_historical_scan_attribution(db, client_name)
     total_hist_scans = len(all_hist_scans)
     hist_last = max((s.scanned_at for s in all_hist_scans), default=None)
     hist_7d = sum(1 for s in all_hist_scans if s.scanned_at >= seven_days_ago)
     hist_30d = sum(1 for s in all_hist_scans if s.scanned_at >= thirty_days_ago)
-    
-    # Use total historical attribution for the client-level stats
-    client_total_scans = total_hist_scans
-    client_scans_7d = hist_7d
-    client_scans_30d = hist_30d
-    if hist_last:
-        if not client_last_scanned_at or hist_last > client_last_scanned_at:
-            client_last_scanned_at = hist_last
+    scans_today = sum(1 for s in all_hist_scans if today_start_utc <= s.scanned_at <= today_end_utc)
+    scans_week = sum(1 for s in all_hist_scans if week_start_utc <= s.scanned_at <= week_end_utc)
+    scans_month = sum(1 for s in all_hist_scans if month_start_utc <= s.scanned_at <= month_end_utc)
     
     total_qrs = len(qrs)
-    active_cnt = sum(1 for q in qrs if q.status == QRStatus.ACTIVE)
-    disabled_cnt = sum(1 for q in qrs if q.status == QRStatus.DISABLED)
-    retired_cnt = sum(1 for q in qrs if q.status == QRStatus.RETIRED)
+    currently_assigned_qrs = sum(1 for i in items if i["is_current_owner"])
+    previously_assigned_qrs = sum(1 for i in items if not i["is_current_owner"])
+    active_cnt = sum(1 for i in items if i["is_current_owner"] and i["status"] == "active")
+    disabled_cnt = sum(1 for i in items if i["is_current_owner"] and i["status"] == "disabled")
+    retired_cnt = sum(1 for i in items if i["is_current_owner"] and i["status"] == "retired")
     
     # Filter
     filtered_items = items
@@ -601,13 +643,19 @@ def get_client_details(
     return {
         "client_name": client_name,
         "total_qr_codes": total_qrs,
+        "currently_assigned_qrs": currently_assigned_qrs,
+        "previously_assigned_qrs": previously_assigned_qrs,
         "active_qr_codes": active_cnt,
         "disabled_qr_codes": disabled_cnt,
         "retired_qr_codes": retired_cnt,
-        "total_scans": client_total_scans,
-        "scans_7d": client_scans_7d,
-        "scans_30d": client_scans_30d,
-        "last_scanned_at": client_last_scanned_at,
+        "total_scans": total_hist_scans,
+        "scans_today": scans_today,
+        "scans_this_week": scans_week,
+        "scans_this_month": scans_month,
+        "scans_7d": hist_7d,
+        "scans_30d": hist_30d,
+        "last_scanned_at": hist_last,
+        "last_scanned_at_ist": to_ist_str(hist_last),
         "never_scanned_count": never_scanned_count,
         "not_scanned_30d_count": not_scanned_30d_count,
         "items": paged_items,
@@ -615,6 +663,7 @@ def get_client_details(
         "page": page,
         "per_page": per_page,
         "total_pages": total_pages,
+        "timezone": "Asia/Kolkata",
     }
 
 
@@ -894,9 +943,11 @@ def get_client_analytics(
     - QR codes with no scans
     - QR codes with declining usage (last 14d vs prior 14d)
     """
+    from app.core.timezone import ist_now, to_ist, to_ist_date_str, get_ist_day_bounds_in_utc
     days = max(7, min(days, 365))
-    now = datetime.utcnow()
-    start_date = now - timedelta(days=days)
+    today_ist = ist_now().date()
+    start_date_ist = today_ist - timedelta(days=days - 1)
+    start_utc, _ = get_ist_day_bounds_in_utc(start_date_ist)
 
     # Get ALL historically attributed redirect scans for this client
     all_attributed_scans = _get_historical_scan_attribution(db, client_name)
@@ -915,41 +966,44 @@ def get_client_analytics(
             "least_used_qrs": [],
             "no_scan_qrs": [],
             "declining_qrs": [],
+            "timezone": "Asia/Kolkata",
         }
 
-    # 1. Daily scan activity (from historically attributed scans only)
+    # 1. Daily scan activity in Asia/Kolkata calendar dates
     daily_map: Dict[str, int] = {}
     for scan in all_attributed_scans:
-        if scan.scanned_at >= start_date:
-            day_key = scan.scanned_at.strftime("%Y-%m-%d")
+        if scan.scanned_at >= start_utc:
+            day_key = to_ist_date_str(scan.scanned_at)
             daily_map[day_key] = daily_map.get(day_key, 0) + 1
 
     daily_scans = []
     for d in range(days):
-        dt = (now - timedelta(days=days - 1 - d)).strftime("%Y-%m-%d")
+        dt = (start_date_ist + timedelta(days=d)).strftime("%Y-%m-%d")
         daily_scans.append({
             "date": dt,
             "scans": daily_map.get(dt, 0),
         })
 
-    # 2. Weekly scan activity
+    # 2. Weekly scan activity in IST
     weekly_map: Dict[str, int] = {}
-    week_cutoff = now - timedelta(days=180)
+    week_cutoff_utc = datetime.utcnow() - timedelta(days=180)
     for scan in all_attributed_scans:
-        if scan.scanned_at >= week_cutoff:
-            week_key = scan.scanned_at.strftime("%Y-W%W")
+        if scan.scanned_at >= week_cutoff_utc:
+            scan_ist = to_ist(scan.scanned_at)
+            week_key = scan_ist.strftime("%Y-W%W")
             weekly_map[week_key] = weekly_map.get(week_key, 0) + 1
     weekly_scans = sorted(
         [{"week": k, "scans": v} for k, v in weekly_map.items()],
         key=lambda x: x["week"],
     )
 
-    # 3. Monthly scan activity
+    # 3. Monthly scan activity in IST
     monthly_map: Dict[str, int] = {}
-    month_cutoff = now - timedelta(days=365)
+    month_cutoff_utc = datetime.utcnow() - timedelta(days=365)
     for scan in all_attributed_scans:
-        if scan.scanned_at >= month_cutoff:
-            month_key = scan.scanned_at.strftime("%Y-%m")
+        if scan.scanned_at >= month_cutoff_utc:
+            scan_ist = to_ist(scan.scanned_at)
+            month_key = scan_ist.strftime("%Y-%m")
             monthly_map[month_key] = monthly_map.get(month_key, 0) + 1
     monthly_scans = sorted(
         [{"month": k, "scans": v} for k, v in monthly_map.items()],
@@ -961,8 +1015,9 @@ def get_client_analytics(
 
     # Build per-QR stats from attributed scans
     qr_stats: Dict[int, Dict[str, int]] = {}
-    fourteen_days_ago = now - timedelta(days=14)
-    twentyeight_days_ago = now - timedelta(days=28)
+    now_utc = datetime.utcnow()
+    fourteen_days_ago = now_utc - timedelta(days=14)
+    twentyeight_days_ago = now_utc - timedelta(days=28)
     for scan in all_attributed_scans:
         qid = scan.qr_code_id
         if qid not in qr_stats:

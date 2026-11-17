@@ -233,6 +233,30 @@ export default function DashboardPage() {
               <div className="stat-value">{stats.total_scans}</div>
               <div className="stat-label">Total Public Scans</div>
             </div>
+
+            <div className="stat-card success" title="Scans recorded today in Asia/Kolkata">
+              <div className="stat-icon">⚡</div>
+              <div className="stat-value">{stats.scans_today ?? 0}</div>
+              <div className="stat-label">Scans Today (IST)</div>
+            </div>
+
+            <div className="stat-card info" title="Scans recorded yesterday in Asia/Kolkata">
+              <div className="stat-icon">⏪</div>
+              <div className="stat-value">{stats.scans_yesterday ?? 0}</div>
+              <div className="stat-label">Scans Yesterday (IST)</div>
+            </div>
+
+            <div className="stat-card primary" title="Scans recorded this week in Asia/Kolkata">
+              <div className="stat-icon">📅</div>
+              <div className="stat-value">{stats.scans_this_week ?? 0}</div>
+              <div className="stat-label">Scans This Week (IST)</div>
+            </div>
+
+            <div className="stat-card accent" title="Scans recorded this month in Asia/Kolkata">
+              <div className="stat-icon">🗓️</div>
+              <div className="stat-value">{stats.scans_this_month ?? 0}</div>
+              <div className="stat-label">Scans This Month (IST)</div>
+            </div>
           </div>
         </div>
       )}
@@ -433,3 +457,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

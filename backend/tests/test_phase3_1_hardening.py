@@ -110,6 +110,13 @@ def test_login_rate_limiting_enforcement():
         assert "rate limit exceeded" in rate_limited_resp.text.lower()
     finally:
         limiter.enabled = False
+        db = TestingSessionLocal()
+        u = db.query(User).filter(User.username == "sec_admin").first()
+        if u:
+            u.failed_login_attempts = 0
+            u.locked_until = None
+            db.commit()
+        db.close()
 
 
 # ============================================================================

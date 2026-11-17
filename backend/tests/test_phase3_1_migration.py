@@ -52,20 +52,9 @@ def test_existing_database_migration(tmp_path):
     # 3. Perform migration using our schema migration and init logic
     test_engine = create_engine(f"sqlite:///{test_db_copy}", connect_args={"check_same_thread": False})
     
-    # Step A: Create any missing tables (e.g., revoked_tokens)
-    Base.metadata.create_all(bind=test_engine)
-    
-    # Step B: Apply column additions (must_change_password, audit status)
-    with test_engine.connect() as conn:
-        user_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(users)"))]
-        if "must_change_password" not in user_cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0"))
-            conn.commit()
-        
-        audit_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(audit_logs)"))]
-        if "status" not in audit_cols:
-            conn.execute(text("ALTER TABLE audit_logs ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'success'"))
-            conn.commit()
+    # Run central init_db migrations on the isolated copy
+    from app.database import init_db
+    init_db(target_engine=test_engine)
     
     # Step C: Run create_default_admin logic to evaluate existing admin passwords
     SessionTest = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)

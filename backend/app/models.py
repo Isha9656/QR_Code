@@ -9,6 +9,7 @@ from app.database import Base
 
 
 class UserRole(str, enum.Enum):
+    SUPER_ADMIN = "super_admin"
     ADMIN = "admin"
     OPERATOR = "operator"
 
@@ -30,6 +31,12 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False, default=UserRole.OPERATOR)
     is_active = Column(Boolean, default=True, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    password_changed_at = Column(DateTime, nullable=True)
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    mfa_secret = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

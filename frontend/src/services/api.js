@@ -41,6 +41,11 @@ export const authAPI = {
   changePassword: (current_password, new_password) =>
     api.post('/api/auth/change-password', { current_password, new_password }),
   createUser: (data) => api.post('/api/auth/users', data),
+  listUsers: () => api.get('/api/auth/users'),
+  updateUser: (id, data) => api.put(`/api/auth/users/${id}`, data),
+  resetPassword: (id, new_password) =>
+    api.post(`/api/auth/users/${id}/reset-password`, { new_password }),
+  deleteUser: (id) => api.delete(`/api/auth/users/${id}`),
 };
 
 // QR Codes
@@ -50,6 +55,7 @@ export const qrAPI = {
   get: (id) => api.get(`/api/qr/${id}`),
   getHistory: (id) => api.get(`/api/qr/${id}/history`),
   assign: (id, data) => api.post(`/api/qr/${id}/assign`, data),
+  bulkAssign: (data) => api.post('/api/qr/bulk-assign', data),
   reassign: (id, data) => api.post(`/api/qr/${id}/reassign`, data),
   deactivate: (id) => api.post(`/api/qr/${id}/deactivate`),
   reactivate: (id) => api.post(`/api/qr/${id}/reactivate`),
@@ -58,6 +64,7 @@ export const qrAPI = {
   resolve: (token) => api.get(`/api/qr/resolve/${token}`),
   getStats: () => api.get('/api/qr/stats'),
   getBusinesses: () => api.get('/api/qr/businesses'),
+  exportCSV: (params) => api.get('/api/qr/export/csv', { params, responseType: 'blob' }),
 };
 
 // Printing
@@ -71,7 +78,8 @@ export const printAPI = {
 
 // Analytics
 export const analyticsAPI = {
-  overview: () => api.get('/api/analytics/overview'),
+  overview: (params) => api.get('/api/analytics/overview', { params }),
+  trends: (days = 30) => api.get('/api/analytics/trends', { params: { days } }),
   scans: (params) => api.get('/api/analytics/scans', { params }),
 };
 
