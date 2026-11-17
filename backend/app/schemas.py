@@ -395,6 +395,7 @@ class ClientListItemResponse(BaseModel):
     retired_qr_codes: int
     total_scans: int
     last_scanned_at: Optional[datetime] = None
+    last_scanned_at_ist: Optional[str] = None
     never_scanned_count: int
     not_scanned_30d_count: int
 

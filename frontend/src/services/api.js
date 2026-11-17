@@ -64,6 +64,7 @@ export const qrAPI = {
   resolve: (token) => api.get(`/api/qr/resolve/${token}`),
   getStats: () => api.get('/api/qr/stats'),
   getBusinesses: () => api.get('/api/qr/businesses'),
+  getAnalytics: (id, days = 30) => api.get(`/api/qr/${id}/analytics`, { params: { days } }),
   exportCSV: (params) => api.get('/api/qr/export/csv', { params, responseType: 'blob' }),
 };
 

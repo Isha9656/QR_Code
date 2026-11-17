@@ -34,6 +34,7 @@ echo [+] Using Python: %PYTHON_EXE%
 echo [+] Working Directory: %CD%
 echo.
 
+set "PYTHONPATH=%BACKEND_DIR%"
 "%PYTHON_EXE%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 if !errorlevel! neq 0 (

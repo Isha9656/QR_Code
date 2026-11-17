@@ -89,6 +89,8 @@ function AppLayout() {
               <Route path="/scan" element={<ScanPage />} />
               <Route path="/clients" element={<ClientsPage />} />
               <Route path="/clients/:clientName" element={<ClientDetailPage />} />
+              <Route path="/businesses" element={<ClientsPage />} />
+              <Route path="/businesses/:clientName" element={<ClientDetailPage />} />
               <Route path="/print-studio" element={isAdmin ? <PrintStudioPage /> : <Navigate to="/" replace />} />
               <Route path="/generate" element={isAdmin ? <GeneratePage /> : <Navigate to="/" replace />} />
               <Route path="/audit" element={isAdmin ? <AuditPage /> : <Navigate to="/" replace />} />

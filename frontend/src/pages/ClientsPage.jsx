@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clientAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { formatIST } from '../utils/date';
 
 export default function ClientsPage() {
   const navigate = useNavigate();
@@ -17,6 +18,8 @@ export default function ClientsPage() {
 
   // Filters & Sorting
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'has_active' | 'has_disabled' | 'has_retired'
+  const [activityFilter, setActivityFilter] = useState('all'); // 'all' | 'has_scans' | 'never_scanned'
   const [sortBy, setSortBy] = useState('client_name');
   const [sortDir, setSortDir] = useState('asc');
 
@@ -26,11 +29,13 @@ export default function ClientsPage() {
     try {
       const params = {
         page,
-        per_page: 15,
+        per_page: 24, // Optimized for 3-4 column grid
         sort_by: sortBy,
         sort_dir: sortDir,
       };
       if (search.trim()) params.search = search.trim();
+      if (statusFilter !== 'all') params.status_filter = statusFilter;
+      if (activityFilter !== 'all') params.activity_filter = activityFilter;
 
       const res = await clientAPI.list(params);
       setClients(res.data.items || []);
@@ -38,7 +43,7 @@ export default function ClientsPage() {
       setTotalPages(res.data.total_pages || 1);
       setSummary(res.data.summary || null);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load client management data');
+      setError(err.response?.data?.detail || 'Failed to load business management data');
     } finally {
       setLoading(false);
     }
@@ -46,7 +51,7 @@ export default function ClientsPage() {
 
   useEffect(() => {
     fetchClients();
-  }, [page, sortBy, sortDir]);
+  }, [page, statusFilter, activityFilter, sortBy, sortDir]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -54,259 +59,346 @@ export default function ClientsPage() {
     fetchClients();
   };
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return 'Never';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  const handleResetFilters = () => {
+    setSearch('');
+    setStatusFilter('all');
+    setActivityFilter('all');
+    setSortBy('client_name');
+    setSortDir('asc');
+    setPage(1);
+  };
+
+  // Generate a distinct avatar background color and initials for any business name
+  const getAvatarProps = (name) => {
+    if (!name) return { initials: '🏢', bg: 'var(--primary-600)' };
+    const words = name.trim().split(/\s+/);
+    const initials = words.length >= 2
+      ? (words[0][0] + words[1][0]).toUpperCase()
+      : name.slice(0, 2).toUpperCase();
+
+    const colors = [
+      '#2563eb', '#0891b2', '#059669', '#d97706', '#7c3aed',
+      '#db2777', '#4f46e5', '#0284c7', '#16a34a', '#ea580c'
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const bg = colors[Math.abs(hash) % colors.length];
+    return { initials, bg };
+  };
+
+  const getBusinessStatusBadge = (client) => {
+    if (client.active_qr_codes > 0) {
+      return <span className="status-pill active">● ACTIVE ({client.active_qr_codes})</span>;
+    }
+    if (client.disabled_qr_codes > 0) {
+      return <span className="status-pill disabled">⏸️ DISABLED</span>;
+    }
+    if (client.retired_qr_codes > 0) {
+      return <span className="status-pill retired">🚫 RETIRED</span>;
+    }
+    return <span className="status-pill unassigned">HISTORICAL</span>;
   };
 
   return (
-    <div className="clients-page">
+    <div className="businesses-page">
+      {/* Page Header */}
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h1 className="page-title">🏢 Client QR Management</h1>
-          <p className="page-subtitle">Track, monitor usage, activate & deactivate QR inventory by business</p>
+          <h1 className="page-title">🏢 Business Management</h1>
+          <p className="page-subtitle">Card-based workspace for managing businesses and their associated QR inventories</p>
         </div>
-        <button className="btn btn-secondary btn-sm" onClick={fetchClients} disabled={loading}>
-          {loading ? 'Refreshing...' : '🔄 Refresh'}
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn btn-secondary btn-sm" onClick={fetchClients} disabled={loading}>
+            {loading ? 'Refreshing...' : '🔄 Refresh'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="login-error" style={{ marginBottom: '16px' }}>{error}</div>}
 
-      {/* Summary Stat Cards */}
+      {/* Summary Statistics Strip */}
       {summary && (
-        <div className="stats-grid" style={{ marginBottom: '20px' }}>
-          <div className="stat-card primary">
-            <div className="stat-icon">🏢</div>
-            <div className="stat-value">{summary.total_clients}</div>
-            <div className="stat-label">Total Clients</div>
+        <div className="biz-summary-grid">
+          <div className="biz-summary-card">
+            <span className="summary-icon">🏢</span>
+            <div className="summary-info">
+              <span className="summary-val">{summary.total_clients}</span>
+              <span className="summary-lbl">Total Businesses</span>
+            </div>
           </div>
-          <div className="stat-card info">
-            <div className="stat-icon">📱</div>
-            <div className="stat-value">{summary.total_qr_codes}</div>
-            <div className="stat-label">Assigned QRs</div>
+          <div className="biz-summary-card">
+            <span className="summary-icon">📦</span>
+            <div className="summary-info">
+              <span className="summary-val">{summary.total_qr_codes}</span>
+              <span className="summary-lbl">Assigned QR Codes</span>
+            </div>
           </div>
-          <div className="stat-card success">
-            <div className="stat-icon">✅</div>
-            <div className="stat-value">{summary.active_qr_codes}</div>
-            <div className="stat-label">Active QRs</div>
+          <div className="biz-summary-card">
+            <span className="summary-icon">🟢</span>
+            <div className="summary-info">
+              <span className="summary-val">{summary.active_qr_codes}</span>
+              <span className="summary-lbl">Active Codes</span>
+            </div>
           </div>
-          <div className="stat-card warning">
-            <div className="stat-icon">⏸️</div>
-            <div className="stat-value">{summary.disabled_qr_codes}</div>
-            <div className="stat-label">Disabled QRs</div>
+          <div className="biz-summary-card">
+            <span className="summary-icon">⏸️</span>
+            <div className="summary-info">
+              <span className="summary-val">{summary.disabled_qr_codes}</span>
+              <span className="summary-lbl">Disabled Codes</span>
+            </div>
           </div>
-          <div className="stat-card danger">
-            <div className="stat-icon">🚫</div>
-            <div className="stat-value">{summary.retired_qr_codes}</div>
-            <div className="stat-label">Retired QRs</div>
+          <div className="biz-summary-card">
+            <span className="summary-icon">🚫</span>
+            <div className="summary-info">
+              <span className="summary-val">{summary.retired_qr_codes}</span>
+              <span className="summary-lbl">Retired Codes</span>
+            </div>
           </div>
-          <div className="stat-card warning" style={{ borderColor: 'rgba(234, 179, 8, 0.4)' }}>
-            <div className="stat-icon">⏳</div>
-            <div className="stat-value">{summary.qr_codes_without_recent_usage}</div>
-            <div className="stat-label">No Scans in 30 Days</div>
+          <div className="biz-summary-card">
+            <span className="summary-icon">⏳</span>
+            <div className="summary-info">
+              <span className="summary-val">{summary.qr_codes_without_recent_usage}</span>
+              <span className="summary-lbl">No Scans (30d)</span>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Controls & Search Bar */}
-      <div className="card" style={{ marginBottom: '20px' }}>
-        <form onSubmit={handleSearchSubmit} style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end' }}>
-          <div style={{ flex: '1 1 240px' }}>
-            <label className="form-label">Search Client Name</label>
+      {/* Modern Filter & Search Toolbar */}
+      <div className="biz-toolbar-card">
+        <form className="biz-toolbar-form" onSubmit={handleSearchSubmit}>
+          {/* Search Box */}
+          <div className="biz-search-field">
+            <span className="biz-search-icon">🔍</span>
             <input
               type="text"
-              className="form-input"
-              placeholder="Search by client or business name..."
+              placeholder="Search business by name..."
+              className="biz-search-input"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {search && (
+              <button
+                type="button"
+                className="clear-btn"
+                onClick={() => { setSearch(''); setPage(1); }}
+              >
+                ✕
+              </button>
+            )}
           </div>
 
-          <div style={{ width: '180px' }}>
-            <label className="form-label">Sort By</label>
+          {/* Status Filter */}
+          <div className="biz-filter-control">
+            <label className="biz-filter-label">Status</label>
             <select
-              className="form-select"
+              className="form-select form-select-sm"
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            >
+              <option value="all">All Statuses</option>
+              <option value="has_active">🟢 Has Active QRs</option>
+              <option value="has_disabled">⏸️ Has Disabled QRs</option>
+              <option value="has_retired">🚫 Has Retired QRs</option>
+            </select>
+          </div>
+
+          {/* Activity Filter */}
+          <div className="biz-filter-control">
+            <label className="biz-filter-label">Scan Activity</label>
+            <select
+              className="form-select form-select-sm"
+              value={activityFilter}
+              onChange={(e) => { setActivityFilter(e.target.value); setPage(1); }}
+            >
+              <option value="all">All Activity</option>
+              <option value="has_scans">🎯 Has Scans</option>
+              <option value="never_scanned">💤 Never Scanned</option>
+            </select>
+          </div>
+
+          {/* Sort By */}
+          <div className="biz-filter-control">
+            <label className="biz-filter-label">Sort By</label>
+            <select
+              className="form-select form-select-sm"
               value={sortBy}
-              onChange={(e) => {
-                setSortBy(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
             >
-              <option value="client_name">Client Name</option>
+              <option value="client_name">Name (Alphabetical)</option>
               <option value="total_qr_codes">Total QR Codes</option>
-              <option value="active_qr_codes">Active QRs</option>
-              <option value="total_scans">Total Scans</option>
-              <option value="last_scanned_at">Last Scanned Date</option>
+              <option value="active_qr_codes">Active QR Codes</option>
+              <option value="total_scans">Lifetime Scans</option>
+              <option value="last_scanned_at">Most Recent Scan</option>
             </select>
           </div>
 
-          <div style={{ width: '130px' }}>
-            <label className="form-label">Direction</label>
+          {/* Sort Direction */}
+          <div className="biz-filter-control" style={{ width: '110px' }}>
+            <label className="biz-filter-label">Order</label>
             <select
-              className="form-select"
+              className="form-select form-select-sm"
               value={sortDir}
-              onChange={(e) => {
-                setSortDir(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => { setSortDir(e.target.value); setPage(1); }}
             >
-              <option value="asc">Ascending ⬆️</option>
-              <option value="desc">Descending ⬇️</option>
+              <option value="asc">Asc ⬆️</option>
+              <option value="desc">Desc ⬇️</option>
             </select>
           </div>
 
-          <div>
-            <button type="submit" className="btn btn-primary" style={{ height: '42px' }}>
-              🔍 Search
+          {/* Actions */}
+          <div className="biz-toolbar-actions">
+            <button type="submit" className="btn btn-primary btn-sm">
+              Filter
             </button>
+            {(search || statusFilter !== 'all' || activityFilter !== 'all' || sortBy !== 'client_name') && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleResetFilters}
+                title="Reset all filters"
+              >
+                Reset
+              </button>
+            )}
           </div>
         </form>
       </div>
 
-      {/* Client List Table / Cards */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {loading ? (
-          <div style={{ padding: '40px', textAlign: 'center' }}>
-            <div className="spinner" style={{ margin: '0 auto 12px' }} />
-            <p style={{ color: '#94a3b8' }}>Loading client inventory...</p>
-          </div>
-        ) : clients.length === 0 ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
-            <div style={{ fontSize: '42px', marginBottom: '12px' }}>🏢</div>
-            <h3>No Clients Found</h3>
-            <p>No client or business records matched your criteria.</p>
-          </div>
-        ) : (
-          <div className="table-responsive">
-            <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'rgba(30, 41, 59, 0.7)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  <th style={{ padding: '12px 16px', textAlign: 'left' }}>Client / Business</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Total QRs</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Lifecycle Status</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Lifetime Scans</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'left' }}>Last Scanned</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'center' }}>Usage Alerts</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clients.map((c) => (
-                  <tr
-                    key={c.client_name}
-                    style={{
-                      borderBottom: '1px solid rgba(255,255,255,0.04)',
-                      transition: 'background 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <td style={{ padding: '14px 16px' }}>
-                      <div style={{ fontWeight: '600', color: '#f8fafc', fontSize: '0.98rem' }}>
-                        {c.client_name}
-                      </div>
-                    </td>
-                    <td style={{ padding: '14px 16px', textAlign: 'center', fontWeight: 'bold' }}>
-                      {c.total_qr_codes}
-                    </td>
-                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      <div style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                        <span className="badge badge-active" title="Active QR Codes">
-                          ✅ {c.active_qr_codes} Active
-                        </span>
-                        {c.disabled_qr_codes > 0 && (
-                          <span className="badge badge-disabled" title="Disabled QR Codes">
-                            ⏸️ {c.disabled_qr_codes} Disabled
-                          </span>
-                        )}
-                        {c.retired_qr_codes > 0 && (
-                          <span className="badge badge-retired" title="Retired QR Codes">
-                            🚫 {c.retired_qr_codes} Retired
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      <span style={{ fontWeight: '600', color: '#38bdf8' }}>
-                        {c.total_scans.toLocaleString()}
-                      </span>
-                    </td>
-                    <td style={{ padding: '14px 16px', color: '#94a3b8', fontSize: '0.88rem' }}>
-                      {formatDate(c.last_scanned_at)}
-                    </td>
-                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      <div style={{ display: 'inline-flex', flexDirection: 'column', gap: '4px', fontSize: '0.78rem' }}>
-                        {c.never_scanned_count > 0 && (
-                          <span style={{ color: '#fbbf24', background: 'rgba(251, 191, 36, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>
-                            {c.never_scanned_count} Never Scanned
-                          </span>
-                        )}
-                        {c.not_scanned_30d_count > 0 && (
-                          <span style={{ color: '#f87171', background: 'rgba(248, 113, 113, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>
-                            {c.not_scanned_30d_count} Inactive &gt; 30d
-                          </span>
-                        )}
-                        {c.never_scanned_count === 0 && c.not_scanned_30d_count === 0 && (
-                          <span style={{ color: '#34d399' }}>Healthy</span>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => navigate(`/clients/${encodeURIComponent(c.client_name)}`)}
-                      >
-                        Manage QRs ➜
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      {/* BUSINESS CARDS GRID */}
+      {loading ? (
+        <div className="loading-spinner">
+          <div className="spinner" />
+          <p style={{ marginTop: '12px', color: 'var(--text-secondary)' }}>Loading businesses...</p>
+        </div>
+      ) : clients.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">🏢</div>
+          <h3>No Businesses Found</h3>
+          <p>No business records matched your search or filter criteria.</p>
+          <button className="btn btn-secondary" onClick={handleResetFilters}>
+            Reset Filters
+          </button>
+        </div>
+      ) : (
+        <div className="biz-cards-grid">
+          {clients.map((c) => {
+            const { initials, bg } = getAvatarProps(c.client_name);
+            return (
+              <div
+                key={c.client_name}
+                className="biz-card"
+                onClick={() => navigate(`/clients/${encodeURIComponent(c.client_name)}`)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate(`/clients/${encodeURIComponent(c.client_name)}`);
+                  }
+                }}
+              >
+                {/* Card Top Row: Logo/Avatar, Business Name & Status */}
+                <div className="biz-card-header">
+                  <div className="biz-avatar" style={{ backgroundColor: bg }}>
+                    {initials}
+                  </div>
+                  <div className="biz-card-titles">
+                    <h3 className="biz-card-name" title={c.client_name}>
+                      {c.client_name}
+                    </h3>
+                    <div className="biz-card-status">
+                      {getBusinessStatusBadge(c)}
+                    </div>
+                  </div>
+                </div>
 
-        {/* Pagination Footer */}
-        {totalPages > 1 && (
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              borderTop: '1px solid rgba(255,255,255,0.06)',
-            }}
+                {/* Card Key Metrics Grid */}
+                <div className="biz-card-metrics">
+                  <div className="biz-metric-item">
+                    <span className="metric-digit">{c.total_qr_codes}</span>
+                    <span className="metric-desc">Assigned QRs</span>
+                  </div>
+                  <div className="biz-metric-item">
+                    <span className="metric-digit" style={{ color: 'var(--green-600)' }}>
+                      {c.active_qr_codes}
+                    </span>
+                    <span className="metric-desc">Active</span>
+                  </div>
+                  <div className="biz-metric-item">
+                    <span className="metric-digit" style={{ color: 'var(--amber-600)' }}>
+                      {c.disabled_qr_codes}
+                    </span>
+                    <span className="metric-desc">Disabled</span>
+                  </div>
+                  <div className="biz-metric-item">
+                    <span className="metric-digit" style={{ color: 'var(--primary-600)' }}>
+                      {(c.total_scans || 0).toLocaleString()}
+                    </span>
+                    <span className="metric-desc">Total Scans</span>
+                  </div>
+                </div>
+
+                {/* Card Timeline & Alert Footer */}
+                <div className="biz-card-footer">
+                  <div className="biz-footer-meta">
+                    <span className="biz-last-scan">
+                      🕒 Last scan: {c.last_scanned_at_ist || (c.last_scanned_at ? formatIST(c.last_scanned_at) : 'Never')}
+                    </span>
+                    <div className="biz-alert-tags">
+                      {c.never_scanned_count > 0 && (
+                        <span className="alert-tag warning" title={`${c.never_scanned_count} assigned QR code(s) have never been scanned`}>
+                          ⚠️ {c.never_scanned_count} Unscanned
+                        </span>
+                      )}
+                      {c.not_scanned_30d_count > 0 && (
+                        <span className="alert-tag muted" title={`${c.not_scanned_30d_count} active QR code(s) had no scans in the last 30 days`}>
+                          ⏳ {c.not_scanned_30d_count} Inactive (30d)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="biz-card-action-row" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="btn btn-primary btn-block btn-sm"
+                      onClick={() => navigate(`/clients/${encodeURIComponent(c.client_name)}`)}
+                      title={`Open dedicated management workspace for ${c.client_name}`}
+                    >
+                      Manage QR Codes →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Pagination Footer */}
+      {totalPages > 1 && (
+        <div className="pagination" style={{ marginTop: '24px' }}>
+          <button
+            className="pagination-btn"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
           >
-            <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
-              Showing Page {page} of {totalPages} ({total} total clients)
-            </span>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                className="btn btn-secondary btn-sm"
-                disabled={page <= 1}
-                onClick={() => setPage(page - 1)}
-              >
-                ◀ Previous
-              </button>
-              <button
-                className="btn btn-secondary btn-sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage(page + 1)}
-              >
-                Next ▶
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+            ← Previous
+          </button>
+          <span className="pagination-info">
+            Page {page} of {totalPages} ({total} Businesses)
+          </span>
+          <button
+            className="pagination-btn"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Next →
+          </button>
+        </div>
+      )}
     </div>
   );
 }

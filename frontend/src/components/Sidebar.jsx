@@ -20,9 +20,9 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile }) {
     {
       groupTitle: 'QR MANAGEMENT',
       items: [
+        { to: '/businesses', label: 'Business Management', icon: '🏢', adminOnly: false },
         { to: '/inventory', label: 'QR Inventory', icon: '📋', adminOnly: false },
         { to: '/scan', label: 'Assign QR Codes', icon: '📷', adminOnly: false },
-        { to: '/clients', label: 'Client Management', icon: '🏢', adminOnly: false },
         { to: '/generate', label: 'Batch Generate', icon: '⚡', adminOnly: true },
       ],
     },
@@ -30,11 +30,11 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile }) {
       groupTitle: 'OPERATIONS',
       items: [
         { to: '/print-studio', label: 'Printing Studio', icon: '🖨️', adminOnly: true },
-        { to: '/audit', label: 'QR Activity & Audit', icon: '🛡️', adminOnly: true },
+        { to: '/audit', label: 'Audit Logs', icon: '🛡️', adminOnly: true },
       ],
     },
     {
-      groupTitle: 'SYSTEM MANAGEMENT',
+      groupTitle: 'ADMINISTRATION',
       items: [
         { to: '/settings', label: 'Settings & Security', icon: '⚙️', adminOnly: false },
       ],
