@@ -26,11 +26,12 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create a JWT access token with a unique jti identifier."""
+    """Create a JWT access token with a unique jti identifier and iat timestamp."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    now_utc = datetime.utcnow()
+    expire = now_utc + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
     jti = uuid.uuid4().hex
-    to_encode.update({"exp": expire, "jti": jti})
+    to_encode.update({"exp": expire, "jti": jti, "iat": int(now_utc.timestamp())})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -53,14 +54,20 @@ async def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     """Get the current authenticated user from the JWT token with persistent revocation check and password change enforcement."""
-    if credentials is None:
+    raw_token = None
+    if credentials is not None:
+        raw_token = credentials.credentials
+    elif "token" in request.query_params:
+        raw_token = request.query_params["token"]
+
+    if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    payload = decode_token(credentials.credentials)
+    payload = decode_token(raw_token)
     
     # Check persistent token revocation
     jti = payload.get("jti")
@@ -87,6 +94,18 @@ async def get_current_user(
             detail="User not found or inactive",
         )
 
+    # Check session invalidation from password changes
+    if user.password_changed_at:
+        token_iat = payload.get("iat")
+        if token_iat:
+            # Allow 2 seconds grace for clock skew
+            if token_iat < int(user.password_changed_at.timestamp()) - 2:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired due to password change. Please log in again.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
     # Centralized password change enforcement
     if user.must_change_password:
         path = request.url.path.rstrip("/")
@@ -105,9 +124,19 @@ async def get_current_user(
     return user
 
 
+async def get_super_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """Require Super Admin (System Owner) role."""
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super Admin / System Owner access required",
+        )
+    return current_user
+
+
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    """Require the current user to be an admin."""
-    if current_user.role != UserRole.ADMIN:
+    """Require Admin or Super Admin role."""
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.ADMIN):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",

@@ -9,7 +9,8 @@ export default function SettingsPage() {
   const [pwSuccess, setPwSuccess] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
 
-  // User creation (admin)
+  // User management (admin)
+  const [usersList, setUsersList] = useState([]);
   const [newUser, setNewUser] = useState({ username: '', password: '', display_name: '', role: 'operator' });
   const [userError, setUserError] = useState('');
   const [userSuccess, setUserSuccess] = useState('');
@@ -19,6 +20,16 @@ export default function SettingsPage() {
   const [backups, setBackups] = useState([]);
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupMsg, setBackupMsg] = useState('');
+
+  const fetchUsers = async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await authAPI.listUsers();
+      setUsersList(res.data || []);
+    } catch (e) {
+      // Ignore
+    }
+  };
 
   const fetchBackups = async () => {
     if (!isAdmin) return;
@@ -32,6 +43,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchBackups();
+    fetchUsers();
   }, [isAdmin]);
 
   const handlePasswordChange = async (e) => {
@@ -88,6 +100,7 @@ export default function SettingsPage() {
       await authAPI.createUser(newUser);
       setUserSuccess(`User "${newUser.username}" created successfully`);
       setNewUser({ username: '', password: '', display_name: '', role: 'operator' });
+      fetchUsers();
     } catch (err) {
       setUserError(err.response?.data?.detail || 'Failed to create user');
     } finally {
@@ -300,6 +313,50 @@ export default function SettingsPage() {
               <li>A pre-restore safety snapshot will be created automatically before replacement.</li>
               <li>Restart the application using <code>run.bat</code>.</li>
             </ol>
+          </div>
+        </div>
+      )}
+
+      {/* Registered Users List (Admin Only) */}
+      {isAdmin && (
+        <div className="card" style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 className="card-title" style={{ margin: 0 }}>👥 Authorized System Users</h3>
+            <button className="btn btn-secondary btn-sm" onClick={fetchUsers}>🔄 Refresh</button>
+          </div>
+          <div className="table-responsive">
+            <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                  <th style={{ padding: '8px' }}>User</th>
+                  <th style={{ padding: '8px' }}>Display Name</th>
+                  <th style={{ padding: '8px' }}>Role</th>
+                  <th style={{ padding: '8px' }}>Status</th>
+                  <th style={{ padding: '8px' }}>Lock / Security</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usersList.map((u) => (
+                  <tr key={u.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                    <td style={{ padding: '8px', fontWeight: '600' }}>{u.username}</td>
+                    <td style={{ padding: '8px' }}>{u.display_name}</td>
+                    <td style={{ padding: '8px' }}>
+                      <span className={`badge ${u.role === 'super_admin' ? 'badge-primary' : u.role === 'admin' ? 'badge-active' : 'badge-disabled'}`}>
+                        {u.role.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px' }}>
+                      <span style={{ color: u.is_active ? '#16a34a' : '#dc2626', fontWeight: '600' }}>
+                        {u.is_active ? '● Active' : '○ Deactivated'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                      {u.locked_until ? '🔒 Locked (Attempts)' : u.failed_login_attempts > 0 ? `⚠️ ${u.failed_login_attempts} failed` : '✅ Normal'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

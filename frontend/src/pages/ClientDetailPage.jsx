@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { clientAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { formatIST } from '../utils/date';
 
 export default function ClientDetailPage() {
   const { clientName } = useParams();
@@ -184,13 +185,7 @@ export default function ClientDetailPage() {
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'Never';
-    return new Date(dateStr).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    return formatIST(dateStr);
   };
 
   return (
@@ -255,7 +250,7 @@ export default function ClientDetailPage() {
           <div className="stat-card primary">
             <div className="stat-icon">📱</div>
             <div className="stat-value">{detail.total_qr_codes}</div>
-            <div className="stat-label">Total QRs Assigned</div>
+            <div className="stat-label">Currently Assigned QRs</div>
           </div>
           <div className="stat-card success">
             <div className="stat-icon">✅</div>
@@ -275,12 +270,22 @@ export default function ClientDetailPage() {
           <div className="stat-card info">
             <div className="stat-icon">🎯</div>
             <div className="stat-value">{detail.total_scans.toLocaleString()}</div>
-            <div className="stat-label">Lifetime Scans</div>
+            <div className="stat-label">Attributed Lifetime Scans</div>
           </div>
-          <div className="stat-card primary" style={{ borderColor: 'rgba(56, 189, 248, 0.3)' }}>
+          <div className="stat-card success" title="Scans today in Asia/Kolkata">
             <div className="stat-icon">⚡</div>
-            <div className="stat-value">{detail.scans_30d.toLocaleString()}</div>
-            <div className="stat-label">Scans (Last 30 Days)</div>
+            <div className="stat-value">{(detail.scans_today ?? 0).toLocaleString()}</div>
+            <div className="stat-label">Scans Today (IST)</div>
+          </div>
+          <div className="stat-card primary" title="Scans this week in Asia/Kolkata">
+            <div className="stat-icon">📅</div>
+            <div className="stat-value">{(detail.scans_this_week ?? 0).toLocaleString()}</div>
+            <div className="stat-label">This Week (IST)</div>
+          </div>
+          <div className="stat-card accent" title="Scans this month in Asia/Kolkata">
+            <div className="stat-icon">🗓️</div>
+            <div className="stat-value">{(detail.scans_this_month ?? 0).toLocaleString()}</div>
+            <div className="stat-label">This Month (IST)</div>
           </div>
         </div>
       )}

@@ -2511,11 +2511,29 @@ textarea.form-input {
 .status-pill.disabled { background: #f1f5f9; color: #475569; }
 .status-pill.retired { background: #fee2e2; color: #dc2626; }
 
-/* Header Right User Profile */
+/* Header Right User Profile & Timezone Badge */
 .header-right {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.timezone-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #1d4ed8;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.tz-flag {
+  font-size: 0.95rem;
 }
 
 .user-profile-badge {

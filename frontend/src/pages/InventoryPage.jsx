@@ -15,8 +15,11 @@ export default function InventoryPage() {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [scanActivity, setScanActivity] = useState('all');
+  const [revealedTokens, setRevealedTokens] = useState(new Set());
   const [selected, setSelected] = useState(new Set());
   const [detailQR, setDetailQR] = useState(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState(null);
   const [history, setHistory] = useState(null);
   const [toast, setToast] = useState(null);
   const [showReassign, setShowReassign] = useState(false);
@@ -28,7 +31,7 @@ export default function InventoryPage() {
   useEffect(() => {
     loadStats();
     loadQRCodes();
-  }, [page, statusFilter]);
+  }, [page, statusFilter, scanActivity]);
 
   useEffect(() => {
     if (toast) {
@@ -36,6 +39,36 @@ export default function InventoryPage() {
       return () => clearTimeout(t);
     }
   }, [toast]);
+
+  const toggleTokenReveal = (id) => {
+    setRevealedTokens(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleExportCSV = async () => {
+    try {
+      setToast({ type: 'info', message: 'Generating CSV export...' });
+      const params = {};
+      if (statusFilter) params.status = statusFilter;
+      if (search) params.search = search;
+      if (scanActivity && scanActivity !== 'all') params.scan_activity = scanActivity;
+      const res = await qrAPI.exportCSV(params);
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `qr_inventory_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setToast({ type: 'success', message: 'CSV exported successfully!' });
+    } catch (err) {
+      console.error(err);
+      setToast({ type: 'error', message: 'Failed to export CSV' });
+    }
+  };
 
   const loadStats = async () => {
     try {
@@ -52,6 +85,7 @@ export default function InventoryPage() {
       const params = { page, per_page: 20 };
       if (statusFilter) params.status = statusFilter;
       if (search) params.search = search;
+      if (scanActivity && scanActivity !== 'all') params.scan_activity = scanActivity;
       const res = await qrAPI.list(params);
       setQrCodes(res.data.items);
       setTotalPages(res.data.total_pages);
@@ -75,13 +109,31 @@ export default function InventoryPage() {
     setTimeout(() => loadQRCodes(), 10);
   };
 
+  const closeDetail = () => {
+    if (previewBlobUrl) {
+      URL.revokeObjectURL(previewBlobUrl);
+      setPreviewBlobUrl(null);
+    }
+    setDetailQR(null);
+  };
+
   const openDetail = async (qr) => {
+    if (previewBlobUrl) {
+      URL.revokeObjectURL(previewBlobUrl);
+      setPreviewBlobUrl(null);
+    }
     setDetailQR(qr);
     try {
       const res = await qrAPI.getHistory(qr.qr_id);
       setHistory(res.data);
     } catch (err) {
       setHistory(null);
+    }
+    try {
+      const imgRes = await printAPI.exportPNG(qr.id, 240);
+      setPreviewBlobUrl(URL.createObjectURL(imgRes.data));
+    } catch (err) {
+      // Fallback handled via query token in img src
     }
   };
 
@@ -91,7 +143,7 @@ export default function InventoryPage() {
     try {
       await qrAPI.deactivate(detailQR.qr_id);
       setToast({ type: 'success', message: `${detailQR.qr_id} deactivated successfully` });
-      setDetailQR(null);
+      closeDetail();
       loadStats();
       loadQRCodes();
     } catch (err) {
@@ -107,7 +159,7 @@ export default function InventoryPage() {
     try {
       await qrAPI.retire(detailQR.qr_id);
       setToast({ type: 'success', message: `${detailQR.qr_id} retired` });
-      setDetailQR(null);
+      closeDetail();
       loadStats();
       loadQRCodes();
     } catch (err) {
@@ -123,7 +175,7 @@ export default function InventoryPage() {
     try {
       await qrAPI.recover(detailQR.qr_id);
       setToast({ type: 'success', message: `${detailQR.qr_id} recovered to unassigned state` });
-      setDetailQR(null);
+      closeDetail();
       loadStats();
       loadQRCodes();
     } catch (err) {
@@ -144,7 +196,7 @@ export default function InventoryPage() {
       await qrAPI.reassign(detailQR.qr_id, reassignForm);
       setToast({ type: 'success', message: `${detailQR.qr_id} reassigned to ${reassignForm.business_name}!` });
       setShowReassign(false);
-      setDetailQR(null);
+      closeDetail();
       setReassignForm({ business_name: '', destination_url: '', notes: '', confirm_reassignment: false });
       loadStats();
       loadQRCodes();
@@ -253,6 +305,13 @@ export default function InventoryPage() {
           <p className="page-subtitle">Track, filter, print, and assign physical & digital QR codes</p>
         </div>
         <div className="header-actions">
+          <button
+            className="btn btn-secondary"
+            onClick={handleExportCSV}
+            title="Export filtered inventory to CSV with Asia/Kolkata timestamps"
+          >
+            📥 Export CSV
+          </button>
           {isAdmin && (
             <button className="btn btn-primary" onClick={() => navigate('/print-studio')}>
               🖨️ Bulk Printing Studio
@@ -341,6 +400,17 @@ export default function InventoryPage() {
               {s.label}
             </button>
           ))}
+          <select
+            className="chip select-activity"
+            value={scanActivity}
+            onChange={(e) => { setScanActivity(e.target.value); setPage(1); }}
+            style={{ padding: '6px 12px', borderRadius: '20px', border: '1px solid var(--gray-300)', background: 'white', fontSize: '0.82rem', cursor: 'pointer' }}
+          >
+            <option value="all">⚡ All Activity</option>
+            <option value="has_scans">🎯 Has Scans</option>
+            <option value="never_scanned">💤 Never Scanned</option>
+            <option value="inactive_30d">⏳ Inactive 30d</option>
+          </select>
         </div>
       </div>
 
@@ -451,8 +521,20 @@ export default function InventoryPage() {
                 )}
 
                 <div className="card-meta">
-                  <span>📅 Created {formatDate(qr.created_at)}</span>
-                  <span className="token-hint">🔑 {qr.token}</span>
+                  <span>📅 {qr.created_at_ist || formatDate(qr.created_at)}</span>
+                  <span
+                    className="token-hint"
+                    onClick={(e) => { e.stopPropagation(); toggleTokenReveal(qr.id); }}
+                    style={{ cursor: 'pointer' }}
+                    title="Click to reveal/hide full token"
+                  >
+                    🔑 {revealedTokens.has(qr.id) ? qr.token : (qr.token?.slice(0, 4) + '••••••••')}
+                  </span>
+                  {qr.total_scans > 0 && (
+                    <span className="scans-count" title={`Last scan: ${qr.last_scanned_at_ist || 'Never'}`}>
+                      🎯 {qr.total_scans} scans
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -511,14 +593,14 @@ export default function InventoryPage() {
 
       {/* FEATURE 1: QR Detail & Assignment History Modal */}
       {detailQR && (
-        <div className="modal-backdrop" onClick={() => setDetailQR(null)}>
+        <div className="modal-backdrop" onClick={closeDetail}>
           <div className="modal-content modal-lg" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div className="modal-title-group">
                 <h2>{detailQR.qr_id}</h2>
                 {getStatusBadge(detailQR.status)}
               </div>
-              <button className="close-btn" onClick={() => setDetailQR(null)}>✕</button>
+              <button className="close-btn" onClick={closeDetail}>✕</button>
             </div>
 
             <div className="detail-modal-grid">
@@ -527,7 +609,10 @@ export default function InventoryPage() {
                 <div className="qr-preview-box">
                   <div className="qr-watermark">PERMANENT STICKER</div>
                   <img
-                    src={`${import.meta.env.VITE_API_URL || ''}/api/qr/export/png/${detailQR.id}?size=240`}
+                    src={
+                      previewBlobUrl ||
+                      `${import.meta.env.VITE_API_URL || ''}/api/qr/export/png/${detailQR.id}?size=240${localStorage.getItem('token') ? `&token=${encodeURIComponent(localStorage.getItem('token'))}` : ''}`
+                    }
                     alt={detailQR.qr_id}
                     className="qr-large-image"
                   />
@@ -629,7 +714,7 @@ export default function InventoryPage() {
                   {detailQR.status === 'unassigned' && (
                     <button
                       className="btn btn-primary"
-                      onClick={() => { setDetailQR(null); navigate('/scan'); }}
+                      onClick={() => { closeDetail(); navigate('/scan'); }}
                     >
                       ⚡ Assign Now in Scanner
                     </button>
