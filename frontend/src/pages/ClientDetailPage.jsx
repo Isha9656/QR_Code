@@ -11,8 +11,8 @@ export default function ClientDetailPage() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
 
-  // 6 Tabs: 'overview' | 'active' | 'disabled' | 'historical' | 'analytics' | 'history'
-  const [activeTab, setActiveTab] = useState('overview');
+  // 6 Tabs: 'active' | 'disabled' | 'overview' | 'historical' | 'analytics' | 'history'
+  const [activeTab, setActiveTab] = useState('active');
 
   // Data states
   const [loading, setLoading] = useState(true);
@@ -292,15 +292,14 @@ export default function ClientDetailPage() {
               </h1>
               {detail && (
                 <span
-                  className={`status-pill ${
-                    detail.active_qr_codes > 0 ? 'active' : detail.disabled_qr_codes > 0 ? 'disabled' : 'unassigned'
-                  }`}
+                  className={`status-pill ${detail.active_qr_codes > 0 ? 'active' : detail.disabled_qr_codes > 0 ? 'disabled' : 'unassigned'
+                    }`}
                 >
                   {detail.active_qr_codes > 0
                     ? `● ACTIVE (${detail.active_qr_codes})`
                     : detail.disabled_qr_codes > 0
-                    ? '⏸️ DISABLED'
-                    : 'HISTORICAL'}
+                      ? '⏸️ DISABLED'
+                      : 'HISTORICAL'}
                 </span>
               )}
             </div>
@@ -438,12 +437,6 @@ export default function ClientDetailPage() {
         }}
       >
         <button
-          onClick={() => setActiveTab('overview')}
-          className={`drawer-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
-        >
-          📋 Overview
-        </button>
-        <button
           onClick={() => setActiveTab('active')}
           className={`drawer-tab-btn ${activeTab === 'active' ? 'active' : ''}`}
         >
@@ -453,7 +446,13 @@ export default function ClientDetailPage() {
           onClick={() => setActiveTab('disabled')}
           className={`drawer-tab-btn ${activeTab === 'disabled' ? 'active' : ''}`}
         >
-          ⏸️ Disabled QRs ({disabledQRs.length})
+          ⏸️ Deactivated QRs ({disabledQRs.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`drawer-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
+        >
+          📋 Overview
         </button>
         <button
           onClick={() => setActiveTab('historical')}

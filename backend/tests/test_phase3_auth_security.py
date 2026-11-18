@@ -183,3 +183,59 @@ def test_cors_origins_settings_parsing():
             os.environ["CORS_ORIGINS"] = old_env
         else:
             os.environ.pop("CORS_ORIGINS", None)
+
+
+def test_jwt_subject_resolution_and_security():
+    """Verify numeric ID, string username, inactive rejection, and non-resolving token security."""
+    db = TestingSessionLocal()
+    
+    # Create an inactive user for testing
+    inactive_user = User(
+        username="disabled_user",
+        password_hash=hash_password("Pass123!Safe"),
+        display_name="Disabled User",
+        role=UserRole.OPERATOR,
+        is_active=False,
+        must_change_password=False,
+    )
+    db.add(inactive_user)
+    db.commit()
+    inactive_id = inactive_user.id
+    
+    normal_admin = db.query(User).filter(User.username == "normal_admin").first()
+    admin_id = normal_admin.id
+    db.close()
+
+    # 1. Numeric user ID subject
+    numeric_token = create_access_token(data={"sub": str(admin_id), "role": "admin"})
+    resp_numeric = client.get("/api/auth/me", headers={"Authorization": f"Bearer {numeric_token}"})
+    assert resp_numeric.status_code == 200
+    assert resp_numeric.json()["username"] == "normal_admin"
+
+    # 2. Legacy string username subject
+    legacy_token = create_access_token(data={"sub": "normal_admin", "role": "admin"})
+    resp_legacy = client.get("/api/auth/me", headers={"Authorization": f"Bearer {legacy_token}"})
+    assert resp_legacy.status_code == 200
+    assert resp_legacy.json()["username"] == "normal_admin"
+
+    # 3. Inactive user with numeric subject must be rejected (401)
+    inactive_num_token = create_access_token(data={"sub": str(inactive_id), "role": "operator"})
+    resp_inactive_num = client.get("/api/auth/me", headers={"Authorization": f"Bearer {inactive_num_token}"})
+    assert resp_inactive_num.status_code == 401
+    assert "not found or inactive" in resp_inactive_num.json()["detail"].lower()
+
+    # 4. Inactive user with username subject must be rejected (401)
+    inactive_str_token = create_access_token(data={"sub": "disabled_user", "role": "operator"})
+    resp_inactive_str = client.get("/api/auth/me", headers={"Authorization": f"Bearer {inactive_str_token}"})
+    assert resp_inactive_str.status_code == 401
+    assert "not found or inactive" in resp_inactive_str.json()["detail"].lower()
+
+    # 5. Non-existent user subject
+    fake_token = create_access_token(data={"sub": "non_existent_ghost_999", "role": "admin"})
+    resp_fake = client.get("/api/auth/me", headers={"Authorization": f"Bearer {fake_token}"})
+    assert resp_fake.status_code == 401
+
+    # 6. Non-existent numeric ID
+    fake_id_token = create_access_token(data={"sub": "999999", "role": "admin"})
+    resp_fake_id = client.get("/api/auth/me", headers={"Authorization": f"Bearer {fake_id_token}"})
+    assert resp_fake_id.status_code == 401
